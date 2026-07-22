@@ -37,7 +37,9 @@ make verify
 ```
 
 `make verify` is credential-free. It validates the 16-case contract manifest,
-runs the deterministic portions of that contract, and performs lint checks.
+runs the deterministic portions of that contract, checks the Python package,
+and runs the Worker's formatting, lint, type, unit, protocol, dry-run, and
+bundle-audit gates.
 
 NVIDIA credentials are entered only through local NemoClaw onboarding. Never
 paste a provider key into a prompt or add it to this repository.
@@ -75,7 +77,9 @@ Worker health endpoint is
 
 See [architecture](docs/architecture.md), [security](docs/security.md), the
 [corrected Codex workflow](docs/codex-workflow.md), and the
-[compatibility report](docs/compatibility-report.md).
+[compatibility report](docs/compatibility-report.md). The reviewed
+[engineering plan](docs/engineering-plan.md) and contextual
+[backlog](TODOS.md) record remaining release work and explicitly deferred scope.
 
 ## License
 
