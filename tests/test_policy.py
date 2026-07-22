@@ -40,3 +40,24 @@ def test_live_gate_scopes_credentials_and_restores_policy_before_teardown() -> N
     assert 'policy_restore="$smoke_tmpdir/policy-before-tightening.json"' in script
     assert 'openshell policy set "$sandbox_name" --policy "$policy_restore" --wait' in script
     assert 'find "$sandbox_upload_root" -depth -delete' in script
+    assert 'nemo-deepagents sandbox upload "$sandbox_name" "$project_root"' not in script
+    assert 'cp -R "$project_root/.deepagents" "$upload_project/.deepagents"' in script
+    assert 'cp "$project_root/AGENTS.md" "$upload_project/AGENTS.md"' in script
+    assert 'nemo-deepagents sandbox upload "$sandbox_name" "$upload_project"' in script
+    assert "credential_successes" in script
+    assert 'if [ "$credential_successes" -ge 3 ]' in script
+    assert "/opt/venv/bin/python3 integrations/nemoclaw/validate_mcp_session.py" in script
+    assert 'while [ "$agent_attempt" -le 3 ]' in script
+    assert (
+        'python3 integrations/nemoclaw/validate_live_thread.py --thread-id "$thread_id"' in script
+    )
+    assert "five_layers must be a JSON array" in script
+    assert "do not read files, fetch URLs, or use shell commands" in script
+
+
+def test_stable_deploy_rechecks_the_final_runtime_session() -> None:
+    root = Path(__file__).resolve().parents[1]
+    script = (root / "integrations/nemoclaw/deploy-cloudflare-mcp.sh").read_text(encoding="utf-8")
+    assert "permanent MCP registration is not ready after policy tightening" in script
+    assert 'validate_mcp_session.py"' in script
+    assert "intentionally narrower than NemoClaw's generated policy" in script
