@@ -305,15 +305,15 @@ Launch B and C in parallel only after Lane A confirms the MCP/approval path. CI/
   - Surfaced by: Architecture and outside reviews — launcher ownership, data plane, protocol, credential isolation, and durable approval must be observed before feature code
   - Files: `integrations/nemoclaw/`, `mcp/research_fixture/`, `policies/openshell/`, `docs/architecture.md`
   - Verify: exact launcher plus live allow/deny/injection/credential/approval-restart/failure cases and machine-readable pinned evidence
-- [ ] **T2 (P1, human: ~2 days / Codex: ~2 hours)** — Foundation — create project guidance, Deep Agents profile, packaging, settings, policy, and evidence interfaces with tests
+- [x] **T2 (P1, human: ~2 days / Codex: ~2 hours)** — Foundation — create project guidance, Deep Agents profile, packaging, settings, policy, and evidence interfaces with tests
   - Surfaced by: Code-quality, outside, and compatibility reviews — supported declarative contracts must precede agent behavior
   - Files: `AGENTS.md`, `pyproject.toml`, `Makefile`, `README.md`, `src/open_agent_system/`, `tests/`
   - Verify: clean environment setup, interface tests, and `make verify`
-- [ ] **T3 (P1, human: ~2 days / Codex: ~2 hours)** — MCP — implement the constrained ephemeral research fixture and negative tests
+- [x] **T3 (P1, human: ~2 days / Codex: ~2 hours)** — MCP — implemented the constrained ephemeral research fixture in the installable Python package with negative tests
   - Surfaced by: Outside review — NemoClaw registers but does not provide the MCP data plane
   - Files: `mcp/research_fixture/`, `policies/openshell/`, `tests/`
   - Verify: handshake, strict schemas, bounds, redirect/private-IP/cross-domain denial, and no-dispatch assertions
-- [ ] **T4 (P1, human: ~3 days / Codex: ~2 hours)** — Agent — implement one declarative orchestrator, one research specialist, and bounded evidence flow
+- [x] **T4 (P1, human: ~3 days / Codex: ~2 hours)** — Agent — implement one declarative orchestrator, one research specialist, and bounded evidence flow
   - Surfaced by: Architecture and compatibility reviews — minimum vertical slice must use the managed `dcode` extension surface
   - Files: `.deepagents/`, `src/open_agent_system/`, `tests/`
   - Verify: profile validation plus live read-only, interactive approval/reject, and headless shell-denial smoke cases
@@ -321,14 +321,15 @@ Launch B and C in parallel only after Lane A confirms the MCP/approval path. CI/
   - Surfaced by: Test and outside reviews — coverage labels needed fixtures, invariants, denial signals, and trace assertions
   - Files: `tests/`, `evals/`, `integrations/nemoclaw/live-smoke.sh`
   - Verify: offline suite on every PR; pinned live acceptance before release
-- [ ] **T6 (P2, human: ~2 days / Codex: ~1 hour)** — Documentation — publish the corrected guide, architecture, security claims, and contribution workflow
+- [x] **T6 (P2, human: ~2 days / Codex: ~1 hour)** — Documentation — publish the corrected guide, architecture, security claims, and contribution workflow
   - Surfaced by: User request and distribution review
   - Files: `docs/`, `README.md`, `AGENTS.md`, `LICENSE`
   - Verify: links, commands, and claims checked against the pinned implementation
-- [ ] **T7 (P2, human: ~1 day / Codex: ~30 minutes)** — Distribution — create the GitHub repository, add CI, push the verified commit, and prepare v0.1.0
+- [x] **T7 (P2, human: ~1 day / Codex: ~30 minutes)** — Distribution — created the public [GitHub repository](https://github.com/joelrlh/open-agent-system), added CI, and pushed the verified `0.1.0.dev0` pre-release baseline
   - Surfaced by: Distribution review
   - Files: `.github/workflows/ci.yml`, root metadata
-  - Verify: remote CI green and repository contains no credentials, sandbox state, or sensitive traces
+  - Verified: initial remote CI passed on Python 3.11 and 3.12; the public-repository redaction scan reported zero findings
+  - Stable `v0.1.0` remains blocked by the explicitly recorded T1/T5 live-gate items
 
 ## Completion Summary
 

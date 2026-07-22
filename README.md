@@ -1,5 +1,7 @@
 # Open Agent System
 
+[![CI](https://github.com/joelrlh/open-agent-system/actions/workflows/ci.yml/badge.svg)](https://github.com/joelrlh/open-agent-system/actions/workflows/ci.yml)
+
 A small, auditable reference implementation of an open agent system using
 NVIDIA NemoClaw, OpenShell, and LangChain Deep Agents Code. The first vertical
 slice contains one orchestrator, one read-only research specialist, one bounded
