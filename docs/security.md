@@ -30,6 +30,28 @@ exception, test fixture, or command output. Offline tests use only secret-shaped
 canaries. Local trace serialization redacts conservative key/token patterns and
 replaces oversized payloads with a bounded marker.
 
+The Cloudflare deployment stores `RESEARCH_FIXTURE_TOKEN` as a Worker secret and
+passes a separately managed copy to NemoClaw's MCP credential provider. The
+public `/health` route returns only schema version and status. The Worker rejects
+missing, malformed, duplicate, and incorrect authorization values before MCP
+parsing, disables platform observability by default, and creates a fresh
+stateless MCP server for each request.
+
+The live gate stages only `.deepagents/`, `AGENTS.md`, and its two validation
+scripts before sandbox upload. It never uploads the host working directory,
+ignored dependency trees, local environment files, or build output.
+
+## Dependency Advisory Boundary
+
+The current MCP SDK dependency graph reports a moderate Windows path-traversal
+advisory in its Node-only Hono static-file adapter. This project deploys a
+Cloudflare Worker, does not import that adapter, and serves no filesystem paths.
+CI blocks high and critical npm advisories and inspects the generated Worker
+bundle to prove the Hono adapter, `serve-static`, Sharp, and libvips codepaths are
+absent. The pinned Sharp override removes the separate high-severity local
+Miniflare advisory without changing the Worker bundle. Remove these exceptions
+when upstream packages publish compatible fixes.
+
 ## Release Blockers
 
 Any unauthorized dispatch, missing denial signal, credential exposure,

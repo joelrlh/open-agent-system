@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-07-22T17:53:45Z",
+  "recorded_at": "2026-07-22T21:36:01Z",
   "gate_status": "in_progress",
   "release_ready": false,
   "host": {
@@ -53,9 +53,23 @@
     "mcp_fixture_revision": "sha256:9dd4c4c729450e591a890ddafda5c3bbf1fbb95c16ee0997e227992639ddeaf1",
     "mcp_corpus_sha256": "61f47628261dee9496161937b678f2ea509f97d0a3c8a7822d195562d1263c09",
     "policy_template_sha256": "7009dcaefe4619b94c30631329cf707bfa0c3f045e305c6ea018bd7dc5788d86",
-    "gate_policy_version": 7,
-    "gate_policy_sha256": "9f9b6a16559a26ef1e8ee2cd28b717222068dab7d1022f44694d49fa4a92cf72",
-    "post_cleanup_policy_version": 9,
+    "gate_policy_version": 43,
+    "gate_policy_sha256": "f4e6abd0fd2f09317fd089c5d37a5acbac28a3e1b63d91d6c1d25d6d76ffd9d7",
+    "post_cleanup_policy_version": 45,
+    "stable_policy_version": 47,
+    "stable_policy_sha256": "f4e6abd0fd2f09317fd089c5d37a5acbac28a3e1b63d91d6c1d25d6d76ffd9d7",
+    "stable_worker_origin": "https://open-agent-research-fixture.joelrlh.workers.dev",
+    "stable_mcp_url": "https://open-agent-research-fixture.joelrlh.workers.dev/mcp",
+    "worker_source_version": "14f6dfb3-0b0b-4005-8950-eaf54bada3c5",
+    "worker_active_secret_version": "72e11668-6bd6-45fd-93a6-862450474ae7",
+    "worker_startup_ms": 56,
+    "stable_gate_thread": "019f8bbe-5be0-7490-a298-035b4b09b07f",
+    "stable_gate_tool_calls": 7,
+    "stable_bridge_registered": true,
+    "stable_runtime_session_tools": [
+      "research.fetch",
+      "research.search"
+    ],
     "mcp_max_body_bytes": 16384,
     "mcp_allowed_methods": [
       "initialize",
@@ -76,7 +90,7 @@
     "Live model invocation returned OPEN_AGENT_MODEL_OK",
     "Git-root project profile discovery loaded orchestrator, researcher, and agent-retrieval skill",
     "Temporary HTTPS MCP registration and credential-resolution control returned HTTP 200/401",
-    "Tightened OpenShell MCP handshake and tool method policy loaded at version 7",
+    "Tightened OpenShell MCP handshake and tool method policy loaded at version 43",
     "OpenShell denied resources/list with HTTP 403 before server dispatch",
     "Fixture rejected an unknown tool and malformed arguments without handler dispatch",
     "Orchestrator delegated once; researcher searched and fetched five-layer-stack with exact provenance",
@@ -87,13 +101,18 @@
     "The persisted Deep Agents thread resumed by identifier after the terminal exited",
     "A one-second agent deadline failed cleanly with exit code 124",
     "Temporary MCP adapter, credential provider, policy endpoint, uploaded workspace, fixture, tunnel, and bearer token were removed",
-    "A later registration-failure injection left no MCP bridge, uploaded workspace, fixture process, tunnel process, or credential"
+    "A later registration-failure injection left no MCP bridge, uploaded workspace, fixture process, tunnel process, or credential",
+    "Stable Cloudflare Worker health returned HTTP 200 and unauthenticated MCP returned HTTP 401",
+    "Three consecutive credential probes and LangChain MCP sessions passed before inference",
+    "Persisted stable-endpoint trace proved one delegation, one managed search, one canonical fetch, exact provenance, and seven tool calls within budget",
+    "Permanent research bridge is attached and credential-ready; a direct LangChain session discovered exactly research.search and research.fetch",
+    "Effective permanent OpenShell policy version 47 permits only five MCP methods with a 16 KiB body cap"
   ],
   "blockers": [
     "The sandbox image digest is not exposed by the current OpenShell status surfaces and remains unpinned.",
     "The full Deep Agents injection path was interrupted by the NVIDIA worker request quota; a direct pinned model-plus-fixture containment check passed, but the end-to-end case must still be rerun before release.",
     "The complete live budget and dependency-failure matrices remain; the agent deadline path passed.",
     "A disposable sandbox rebuild/destroy lifecycle check remains; the configured sandbox was preserved.",
-    "A final quick-tunnel rerun failed closed because the macOS system resolver could not resolve a newly issued trycloudflare.com hostname; public DNS resolved it and cleanup passed."
+    "NemoClaw records its broader generated MCP policy, so the reviewed tighter effective policy intentionally appears as drift and prevents the built-in post-tightening credential probe; the deployment separately verifies the actual LangChain session and effective policy."
   ]
 }

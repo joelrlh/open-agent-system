@@ -80,7 +80,7 @@ The production-shaped command is `nemo-deepagents open-agent-system agent -n "<b
 
 ### Tool Boundary
 
-Preferred live path: a repository-owned, ephemeral HTTPS Streamable-HTTP MCP fixture exposing `research.search` and `research.fetch`. The fixture runs outside the sandbox, binds only to host loopback, uses short-lived bearer authentication, and is exposed during acceptance through a temporary public HTTPS tunnel because NemoClaw correctly rejects private and host-gateway MCP destinations. It serves only deterministic checked-in research pages, validates strict input schemas, caps request and response sizes, rejects every non-canonical URI, and performs no arbitrary network fetch or redirect.
+Preferred live path: the repository-owned, stateless Cloudflare Streamable-HTTP MCP Worker at `open-agent-research-fixture.joelrlh.workers.dev`, exposing only `research.search` and `research.fetch`. The deployment generates a bearer credential, stores it as a Cloudflare Worker secret and an OpenShell provider credential, waits for stable propagation, proves the real LangChain MCP session, and validates the persisted agent trace before permanent registration. The same fixture remains runnable on host loopback behind a disposable HTTPS tunnel for local compatibility tests. Both forms serve only deterministic checked-in research pages, validate strict input schemas, cap request and response sizes, reject every non-canonical URI, and perform no arbitrary network fetch or redirect.
 
 OpenShell permits the minimum complete protocol: `initialize`, `notifications/initialized`, `ping`, `tools/list`, and `tools/call`. OpenShell `0.0.85` does not provide per-tool authorization—`strict_tool_names` validates syntax—so the fixture exposes only `research.search` and `research.fetch`, rejects unknown names before handler dispatch, and enforces read-only semantics and argument validation server-side. All returned content is untrusted model input. The managed safe interpreter remains enabled because Deep Agents Code uses its bounded programmatic-tool-calling path for MCP execution; headless shell access remains disabled.
 
@@ -94,7 +94,7 @@ Before feature implementation:
 2. Verify sandbox create, connect, status, rebuild, and destroy.
 3. Verify strict filesystem policy loads or sandbox startup fails; treat Landlock/seccomp enforcement as observed behavior, not a platform assumption.
 4. Launch repository code through the exact production-shaped NemoClaw/Deep Agents command and verify managed inference without exposing the provider credential in the environment, generated config, trace, exception, or command output.
-5. Start the ephemeral TLS MCP fixture, complete the MCP handshake, and prove OpenShell permits only `research.search` and `research.fetch`.
+5. Deploy or start the repository-owned HTTPS MCP fixture, complete the MCP handshake, and prove OpenShell permits only `research.search` and `research.fetch`.
 6. Prove disallowed MCP methods/tools/endpoints and malformed, oversized, redirecting, private-IP, and cross-domain arguments are denied without dispatch.
 7. Prove fetched prompt-injection content cannot escalate tools, extract credentials, override instructions, forge provenance, or exhaust budgets.
 8. Prove Deep Agents pauses on the non-production sentinel tool and durably resumes after process restart for approve and reject; prove abandonment expires.
@@ -309,7 +309,7 @@ Launch B and C in parallel only after Lane A confirms the MCP/approval path. CI/
   - Surfaced by: Code-quality, outside, and compatibility reviews — supported declarative contracts must precede agent behavior
   - Files: `AGENTS.md`, `pyproject.toml`, `Makefile`, `README.md`, `src/open_agent_system/`, `tests/`
   - Verify: clean environment setup, interface tests, and `make verify`
-- [x] **T3 (P1, human: ~2 days / Codex: ~2 hours)** — MCP — implemented the constrained ephemeral research fixture in the installable Python package with negative tests
+- [x] **T3 (P1, human: ~2 days / Codex: ~2 hours)** — MCP — implemented the constrained research fixture in the installable Python package and as a stable Cloudflare Worker, with negative tests
   - Surfaced by: Outside review — NemoClaw registers but does not provide the MCP data plane
   - Files: `mcp/research_fixture/`, `policies/openshell/`, `tests/`
   - Verify: handshake, strict schemas, bounds, redirect/private-IP/cross-domain denial, and no-dispatch assertions

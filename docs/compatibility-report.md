@@ -22,14 +22,16 @@ paths now pass.
   `$agent-retrieval`. Sandbox uploads intentionally omit `.git`, so the
   disposable uploaded workspace needs an empty Git-root marker before `dcode`
   discovers project extensions.
-- Registered the repository-owned fixture through a temporary Cloudflare HTTPS
-  tunnel and short-lived bearer credential. The credential-resolution probe
-  returned HTTP 200 while the no-credential control returned HTTP 401.
-- Tightened OpenShell policy version 7 to `initialize`,
+- Deployed the repository-owned fixture to the stable Cloudflare Worker
+  `open-agent-research-fixture.joelrlh.workers.dev` and permanently registered
+  its authenticated `/mcp` endpoint. Health returned HTTP 200 while an
+  unauthenticated MCP request returned HTTP 401.
+- Tightened permanent OpenShell policy version 47 to `initialize`,
   `notifications/initialized`, `ping`, `tools/list`, and `tools/call`, with a
   16 KiB request cap.
-- Proved a full one-delegation search/fetch result with exact
-  `five-layer-stack` provenance.
+- Proved a full persisted-trace result with one delegation, one managed search,
+  one canonical fetch, exact `five-layer-stack` provenance, and seven tool calls
+  within the eight-call budget.
 - Proved `resources/list` is denied by OpenShell with HTTP 403, and unknown
   tools plus malformed arguments are rejected without fixture-handler dispatch.
 - Proved the provider environment contains a synthetic gateway credential rather
@@ -51,10 +53,38 @@ paths now pass.
   hostname resolved through public DNS but not the macOS system resolver, so
   registration failed closed. The script left no bridge, uploaded workspace,
   fixture process, tunnel process, or credential behind.
+- Replaced the quick-tunnel dependency with the stable Worker. Credential
+  rotation showed up to 52 seconds of mixed edge responses, so deployment now
+  requires three consecutive authenticated endpoint checks, three wire-level
+  credential checks, and three real LangChain MCP sessions before inference.
+- Left one permanent `research` bridge attached and credential-ready. A direct
+  post-tightening LangChain session discovered exactly `research.search` and
+  `research.fetch`; no temporary live-gate workspace remained.
 
 Machine-readable evidence is in `integrations/nemoclaw/known-good.json` and
 `artifacts/compatibility/live-gate-20260722.json`. Their `release_ready` fields
 remain `false` until every live case passes.
+
+## Stable Cloudflare Deployment
+
+- Origin: `https://open-agent-research-fixture.joelrlh.workers.dev`
+- Health: `GET /health` -> HTTP 200
+- MCP without bearer: `POST /mcp` -> HTTP 401
+- Active Worker version: `72e11668-6bd6-45fd-93a6-862450474ae7`
+- Deploy-reported startup time: 56 ms
+- Effective OpenShell policy: version 47,
+  `f4e6abd0fd2f09317fd089c5d37a5acbac28a3e1b63d91d6c1d25d6d76ffd9d7`
+
+The reviewed effective policy is narrower than NemoClaw's generated registration
+policy. NemoClaw therefore reports policy drift and skips its built-in
+post-tightening credential probe. Deployment verifies that probe before
+tightening, then verifies the real LangChain session and exact effective policy.
+Credential rotation and policy reconciliation must use the repository deploy
+script so the broad generated policy is never left active.
+
+Wrangler's alpha `check startup` command analyzed the prebuilt bundle but then
+failed inside Wrangler while parsing FormData. This does not affect deployment;
+the normal deploy completed and reported the startup measurement above.
 
 ## Docker Desktop Diagnostic Finding
 
@@ -125,6 +155,7 @@ arbitrary network fetches.
 NVIDIA onboarding is complete. The live route is
 `nvidia-prod / nvidia/nemotron-3-ultra-550b-a55b`, with no route drift. No
 additional operator input is required for the remaining automated gate checks.
+The stable Worker and permanent `research` bridge are active.
 
 ## Remaining Gate Cases
 
@@ -133,5 +164,5 @@ additional operator input is required for the remaining automated gate checks.
   model-plus-fixture path passed; the nested path hit worker quota)
 - Complete live budget and dependency-failure matrices (the agent deadline and
   cleanup paths pass)
-- Reliable system resolution of newly issued `trycloudflare.com` quick-tunnel
-  hostnames, or a stable operator-managed HTTPS fixture endpoint
+- Reconcile NemoClaw's generated-policy registry with the reviewed tighter
+  effective MCP policy so built-in lifecycle status no longer reports drift

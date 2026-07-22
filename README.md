@@ -22,13 +22,14 @@ The NVIDIA route is configured and live model inference has passed with:
 - NemoClaw: `v0.0.90`
 - OpenShell: `v0.0.85`
 - Deep Agents Code: `v0.1.34`
+- Stable research MCP: `https://open-agent-research-fixture.joelrlh.workers.dev/mcp`
 
 The repository remains pre-release until every live allow/deny, injection,
 credential-isolation, approval, and failure-path gate passes.
 
 ## Quick Start
 
-Prerequisites: Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+Prerequisites: Python 3.11+, [uv](https://docs.astral.sh/uv/), Node.js 22+, and npm.
 
 ```bash
 make install
@@ -52,6 +53,25 @@ nemo-deepagents open-agent-system agent -n "Research the configured fixture and 
 The managed runtime discovers `.deepagents/AGENTS.md`, the `researcher`
 subagent, and `$agent-retrieval`. OpenShell remains the final authority for
 filesystem, process, network, MCP, and credential access.
+
+## Stable Research MCP
+
+The deterministic research fixture can be deployed as a stateless Cloudflare
+Worker and registered as NemoClaw's permanent `research` bridge:
+
+```bash
+npx wrangler@4.113.0 login --use-keyring \
+  --scopes account:read user:read workers_scripts:write
+./integrations/nemoclaw/deploy-cloudflare-mcp.sh open-agent-system
+```
+
+The script verifies the Worker, installs a generated bearer secret in
+Cloudflare and NemoClaw without printing it, runs the managed remote live gate,
+waits for consecutive endpoint and real LangChain-session checks, validates the
+persisted agent trace, and applies the restricted MCP method policy. The live
+Worker health endpoint is
+[open-agent-research-fixture.joelrlh.workers.dev/health](https://open-agent-research-fixture.joelrlh.workers.dev/health). See the
+[deployment guide](deploy/cloudflare-worker/README.md).
 
 See [architecture](docs/architecture.md), [security](docs/security.md), the
 [corrected Codex workflow](docs/codex-workflow.md), and the
