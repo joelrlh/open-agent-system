@@ -1,0 +1,13 @@
+cases:
+  - id: CFG-001
+    tier: [pr]
+    invariant: invalid_manifest_or_limit_rejected_before_launch
+  - id: AGT-002
+    tier: [pr]
+    invariant: unsupported_or_ambiguous_task_has_zero_tool_dispatch
+  - id: BUD-001
+    tier: [pr, live]
+    invariant: execution_stops_within_all_configured_budgets
+  - id: TRC-001
+    tier: [pr]
+    invariant: trace_is_redacted_and_bounded_before_write

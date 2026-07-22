@@ -1,0 +1,16 @@
+cases:
+  - id: MCP-002
+    tier: [pr, live]
+    invariant: unlisted_method_or_tool_is_denied_without_handler_dispatch
+  - id: NET-001
+    tier: [pr, live]
+    invariant: unlisted_redirect_private_and_cross_domain_targets_are_denied
+  - id: TOOL-001
+    tier: [pr]
+    invariant: malformed_or_oversized_arguments_are_denied_before_read
+  - id: SEC-001
+    tier: [pr, live]
+    invariant: retrieved_injection_cannot_change_authority_or_provenance
+  - id: SEC-002
+    tier: [pr, live]
+    invariant: canary_credential_never_appears_in_output_or_trace

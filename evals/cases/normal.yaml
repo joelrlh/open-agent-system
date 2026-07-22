@@ -1,0 +1,13 @@
+cases:
+  - id: AGT-001
+    tier: [pr, live]
+    invariant: exactly_one_researcher_delegation_with_cited_bounded_result
+  - id: MCP-001
+    tier: [pr, live]
+    invariant: only_registered_search_and_fetch_dispatch
+  - id: FLOW-001
+    tier: [pr]
+    invariant: clean_checkout_make_verify_without_model_credential
+  - id: FLOW-002
+    tier: [live]
+    invariant: result_matches_fixture_without_invented_source

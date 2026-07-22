@@ -1,0 +1,36 @@
+# Rendered values are supplied by NemoClaw registration and
+# integrations/nemoclaw/tighten-mcp-policy.sh. Do not apply this template
+# directly without replacing the ${...} placeholders.
+version: 1
+network_policies:
+  mcp_bridge_research:
+    name: mcp_bridge_research
+    binaries:
+      - path: /usr/local/bin/dcode
+      - path: /opt/venv/bin/python3*
+    endpoints:
+      - host: ${MCP_HOST}
+        port: 443
+        path: /mcp
+        allowed_ips: ${MCP_ALLOWED_IPS}
+        protocol: mcp
+        enforcement: enforce
+        mcp:
+          allow_all_known_mcp_methods: false
+          strict_tool_names: true
+          max_body_bytes: 16384
+        rules:
+          - allow:
+              method: initialize
+          - allow:
+              method: notifications/initialized
+          - allow:
+              method: ping
+          - allow:
+              method: tools/list
+          - allow:
+              method: tools/call
+
+# OpenShell v0.0.85 validates MCP tool-name syntax but does not authorize an
+# allowlist of tool names. The fixture therefore exposes only research.search
+# and research.fetch, and rejects unknown names before handler dispatch.

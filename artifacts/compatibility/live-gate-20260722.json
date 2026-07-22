@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-07-22T17:53:45Z",
+  "release_ready": false,
+  "runtime": {
+    "sandbox": "open-agent-system",
+    "provider": "nvidia-prod",
+    "model": "nvidia/nemotron-3-ultra-550b-a55b",
+    "nemoclaw": "0.0.90",
+    "openshell": "0.0.85",
+    "deep_agents_code": "0.1.34"
+  },
+  "case_results": [
+    {"id": "CFG-001", "pr": "pass", "live": "not_required"},
+    {"id": "AGT-001", "pr": "pass", "live": "pass"},
+    {"id": "AGT-002", "pr": "pass", "live": "not_required"},
+    {"id": "MCP-001", "pr": "pass", "live": "pass"},
+    {"id": "MCP-002", "pr": "pass", "live": "pass"},
+    {"id": "NET-001", "pr": "pass", "live": "pass"},
+    {"id": "HITL-001", "pr": "not_required", "live": "pass"},
+    {"id": "HITL-002", "pr": "pass", "live": "pass"},
+    {"id": "TOOL-001", "pr": "pass", "live": "not_required"},
+    {"id": "BUD-001", "pr": "pass", "live": "partial"},
+    {"id": "TRC-001", "pr": "pass", "live": "not_required"},
+    {"id": "FLOW-001", "pr": "pass", "live": "not_required"},
+    {"id": "FLOW-002", "pr": "pass", "live": "pass"},
+    {"id": "SEC-001", "pr": "pass", "live": "partial"},
+    {"id": "SEC-002", "pr": "pass", "live": "pass"},
+    {"id": "FAIL-001", "pr": "pass", "live": "partial"}
+  ],
+  "observations": {
+    "delegation_count": 1,
+    "source_id": "five-layer-stack",
+    "provenance_preserved": true,
+    "prompt_injection_direct_path_contained": true,
+    "prompt_injection_nested_path": "blocked_by_provider_worker_quota",
+    "hitl_reject_dispatched": false,
+    "hitl_approve_execution_count": 1,
+    "thread_resume_verified": true,
+    "agent_timeout_seconds": 1,
+    "agent_timeout_exit_code": 124,
+    "credential_probe_status": 200,
+    "no_credential_control_status": 401,
+    "forbidden_mcp_method_status": 403,
+    "temporary_mcp_bridge_removed": true,
+    "temporary_provider_removed": true,
+    "temporary_fixture_stopped": true,
+    "temporary_tunnel_stopped": true,
+    "temporary_credential_unset": true,
+    "temporary_uploaded_workspace_removed": true,
+    "failed_registration_cleanup_verified": true
+  },
+  "gate_blockers": [
+    "The current OpenShell status surfaces do not expose an immutable sandbox image digest.",
+    "The full nested Deep Agents injection path must be rerun after the NVIDIA worker quota resets.",
+    "The complete live budget matrix and dependency-failure matrix remain to be exercised.",
+    "A disposable sandbox rebuild/destroy lifecycle check remains; the configured sandbox was preserved.",
+    "A final quick-tunnel rerun failed closed because the macOS system resolver could not resolve a newly issued trycloudflare.com hostname; public DNS resolved it and cleanup passed."
+  ]
+}

@@ -1,0 +1,10 @@
+cases:
+  - id: HITL-001
+    tier: [live]
+    invariant: interactive_approval_executes_once_after_approval
+  - id: HITL-002
+    tier: [pr, live]
+    invariant: interactive_reject_and_headless_shell_cause_no_execution
+  - id: FAIL-001
+    tier: [pr, live]
+    invariant: dependency_faults_fail_within_budget_and_cleanup

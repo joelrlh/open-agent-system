@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Retrieval"
+  short_description: "Gather bounded evidence with cited provenance"
+  default_prompt: "Use $agent-retrieval to research this task with approved read-only tools and return bounded evidence with provenance."
