@@ -1,7 +1,8 @@
-.PHONY: install format lint test profile verify
+.PHONY: install format lint test profile worker verify-python verify
 
 install:
 	uv sync --all-groups
+	npm ci
 
 format:
 	uv run ruff format .
@@ -17,4 +18,9 @@ test:
 profile:
 	uv run open-agent-system verify --json
 
-verify: lint test profile
+worker:
+	npm run worker:check
+
+verify-python: lint test profile
+
+verify: verify-python worker
