@@ -47,6 +47,21 @@ acceptance workflow documented in `docs/compatibility-report.md`. Any
 unauthorized execution, credential exposure, skipped security case, or live
 tuple drift blocks release.
 
+## Deployment
+
+- Platform: Cloudflare Workers, configured by
+  `deploy/cloudflare-worker/wrangler.jsonc`.
+- Runtime: Node.js 22 or newer for local tooling; the deployed Worker uses the
+  pinned Cloudflare compatibility date in that config.
+- Deployment command:
+  `./integrations/nemoclaw/deploy-cloudflare-mcp.sh open-agent-system`.
+- Public health route: `/health`. Authenticated Streamable HTTP MCP route:
+  `/mcp`.
+- Cloudflare stores `RESEARCH_FIXTURE_TOKEN` as a Worker secret; NemoClaw stores
+  its corresponding host credential. Never persist the value locally.
+- A successful deployment leaves the `research` MCP bridge registered and
+  applies `integrations/nemoclaw/tighten-mcp-policy.sh`.
+
 ## Repository Boundaries
 
 - `.deepagents/` contains the managed Deep Agents profile and skills.

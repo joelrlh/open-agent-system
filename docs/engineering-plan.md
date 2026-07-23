@@ -76,11 +76,21 @@ Security precedence is monotonic: agent instructions cannot grant authority; Lan
 
 The repository owns declarative project instructions, subagent definitions, skills, the deterministic MCP fixture, policies, and evaluation contracts. NemoClaw owns onboarding and the supported Deep Agents Code launcher; OpenShell owns the sandbox and gateway. The compatibility spike disproved the earlier custom Python-launcher assumption: NemoClaw's pinned launcher uses an isolated read-only environment and intentionally disables project autoloading, executable hooks, unmanaged MCP files, and provider overrides.
 
-The production-shaped command is `nemo-deepagents open-agent-system agent -n "<bounded task>"`. The checked-out workspace supplies `.deepagents/AGENTS.md`, `.deepagents/agents/<name>/AGENTS.md`, and `.deepagents/skills/<name>/SKILL.md`; NemoClaw supplies the managed MCP projection and inference route. The live gate satisfied the T3 precondition on 2026-07-22: after adding a disposable Git-root marker to the uploaded workspace, the exact managed path discovered the profile, reached managed inference and the HTTPS MCP fixture, delegated once, and returned cited evidence.
+The operator command is `make ask QUERY="<bounded research task>"`. The
+repository launcher uploads `.deepagents/AGENTS.md`,
+`.deepagents/agents/<name>/AGENTS.md`, and
+`.deepagents/skills/<name>/SKILL.md` into a disposable Git-root workspace, then
+invokes the NemoClaw-managed `dcode` launcher there; NemoClaw supplies the
+managed MCP projection and inference route. The direct
+`nemo-deepagents ... agent` wrapper starts at `/sandbox` and does not sync the
+host checkout. The live gate satisfied the T3 precondition on 2026-07-22: after
+adding the disposable Git-root marker, the exact managed path discovered the
+profile, reached managed inference and the HTTPS MCP fixture, delegated once,
+and returned cited evidence.
 
 ### Tool Boundary
 
-Preferred live path: a repository-owned, ephemeral HTTPS Streamable-HTTP MCP fixture exposing `research.search` and `research.fetch`. The fixture runs outside the sandbox, binds only to host loopback, uses short-lived bearer authentication, and is exposed during acceptance through a temporary public HTTPS tunnel because NemoClaw correctly rejects private and host-gateway MCP destinations. It serves only deterministic checked-in research pages, validates strict input schemas, caps request and response sizes, rejects every non-canonical URI, and performs no arbitrary network fetch or redirect.
+Preferred live path: the repository-owned, stateless Cloudflare Streamable-HTTP MCP Worker at `open-agent-research-fixture.joelrlh.workers.dev`, exposing only `research.search` and `research.fetch`. The deployment generates a bearer credential, stores it as a Cloudflare Worker secret and an OpenShell provider credential, waits for stable propagation, proves the real LangChain MCP session, and validates the persisted agent trace before permanent registration. The same fixture remains runnable on host loopback behind a disposable HTTPS tunnel for local compatibility tests. Both forms serve only deterministic checked-in research pages, validate strict input schemas, cap request and response sizes, reject every non-canonical URI, and perform no arbitrary network fetch or redirect.
 
 OpenShell permits the minimum complete protocol: `initialize`, `notifications/initialized`, `ping`, `tools/list`, and `tools/call`. OpenShell `0.0.85` does not provide per-tool authorization—`strict_tool_names` validates syntax—so the fixture exposes only `research.search` and `research.fetch`, rejects unknown names before handler dispatch, and enforces read-only semantics and argument validation server-side. All returned content is untrusted model input. The managed safe interpreter remains enabled because Deep Agents Code uses its bounded programmatic-tool-calling path for MCP execution; headless shell access remains disabled.
 
@@ -94,7 +104,7 @@ Before feature implementation:
 2. Verify sandbox create, connect, status, rebuild, and destroy.
 3. Verify strict filesystem policy loads or sandbox startup fails; treat Landlock/seccomp enforcement as observed behavior, not a platform assumption.
 4. Launch repository code through the exact production-shaped NemoClaw/Deep Agents command and verify managed inference without exposing the provider credential in the environment, generated config, trace, exception, or command output.
-5. Start the ephemeral TLS MCP fixture, complete the MCP handshake, and prove OpenShell permits only `research.search` and `research.fetch`.
+5. Deploy or start the repository-owned HTTPS MCP fixture, complete the MCP handshake, and prove OpenShell permits only `research.search` and `research.fetch`.
 6. Prove disallowed MCP methods/tools/endpoints and malformed, oversized, redirecting, private-IP, and cross-domain arguments are denied without dispatch.
 7. Prove fetched prompt-injection content cannot escalate tools, extract credentials, override instructions, forge provenance, or exhaust budgets.
 8. Prove Deep Agents pauses on the non-production sentinel tool and durably resumes after process restart for approve and reject; prove abandonment expires.
@@ -309,7 +319,7 @@ Launch B and C in parallel only after Lane A confirms the MCP/approval path. CI/
   - Surfaced by: Code-quality, outside, and compatibility reviews — supported declarative contracts must precede agent behavior
   - Files: `AGENTS.md`, `pyproject.toml`, `Makefile`, `README.md`, `src/open_agent_system/`, `tests/`
   - Verify: clean environment setup, interface tests, and `make verify`
-- [x] **T3 (P1, human: ~2 days / Codex: ~2 hours)** — MCP — implemented the constrained ephemeral research fixture in the installable Python package with negative tests
+- [x] **T3 (P1, human: ~2 days / Codex: ~2 hours)** — MCP — implemented the constrained research fixture in the installable Python package and as a stable Cloudflare Worker, with negative tests
   - Surfaced by: Outside review — NemoClaw registers but does not provide the MCP data plane
   - Files: `mcp/research_fixture/`, `policies/openshell/`, `tests/`
   - Verify: handshake, strict schemas, bounds, redirect/private-IP/cross-domain denial, and no-dispatch assertions

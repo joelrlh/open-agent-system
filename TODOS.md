@@ -34,7 +34,7 @@
 
 **Why:** Detect upstream breakage and security-policy drift before a manual upgrade is attempted.
 
-**Context:** v0.1 records one exact known-good version and image-digest matrix plus a manual compatibility command. Scheduled checks should test upgrades in isolation, publish a report, and open review work when needed. They must never automatically update the pinned runtime, generated lockfiles, or security policy.
+**Context:** v0.1 records one exact known-good version matrix plus a manual compatibility command. Its current OpenShell status surfaces do not expose the sandbox image digest, so immutable image pinning remains a separate release blocker. Scheduled checks should test upgrades in isolation, publish a report, and open review work when needed. They must never automatically update the pinned runtime, generated lockfiles, or security policy.
 
 **Effort:** M
 **Priority:** P2

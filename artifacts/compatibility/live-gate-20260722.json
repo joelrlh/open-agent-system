@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-07-22T17:53:45Z",
+  "recorded_at": "2026-07-22T21:36:01Z",
   "release_ready": false,
   "runtime": {
     "sandbox": "open-agent-system",
@@ -48,13 +48,23 @@
     "temporary_tunnel_stopped": true,
     "temporary_credential_unset": true,
     "temporary_uploaded_workspace_removed": true,
-    "failed_registration_cleanup_verified": true
+    "failed_registration_cleanup_verified": true,
+    "stable_worker_origin": "https://open-agent-research-fixture.joelrlh.workers.dev",
+    "stable_mcp_url": "https://open-agent-research-fixture.joelrlh.workers.dev/mcp",
+    "worker_active_version": "72e11668-6bd6-45fd-93a6-862450474ae7",
+    "worker_startup_ms": 56,
+    "stable_policy_version": 47,
+    "stable_policy_hash": "f4e6abd0fd2f09317fd089c5d37a5acbac28a3e1b63d91d6c1d25d6d76ffd9d7",
+    "stable_gate_thread": "019f8bbe-5be0-7490-a298-035b4b09b07f",
+    "stable_gate_tool_calls": 7,
+    "stable_bridge_registered": true,
+    "stable_runtime_session_tools": ["research.fetch", "research.search"]
   },
   "gate_blockers": [
     "The current OpenShell status surfaces do not expose an immutable sandbox image digest.",
     "The full nested Deep Agents injection path must be rerun after the NVIDIA worker quota resets.",
     "The complete live budget matrix and dependency-failure matrix remain to be exercised.",
     "A disposable sandbox rebuild/destroy lifecycle check remains; the configured sandbox was preserved.",
-    "A final quick-tunnel rerun failed closed because the macOS system resolver could not resolve a newly issued trycloudflare.com hostname; public DNS resolved it and cleanup passed."
+    "NemoClaw's generated-policy registry does not recognize the reviewed tighter effective MCP policy, so the built-in post-tightening probe is skipped; direct LangChain session and policy checks pass."
   ]
 }

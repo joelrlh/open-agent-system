@@ -1,7 +1,8 @@
-.PHONY: install format lint test profile verify
+.PHONY: install format lint test profile worker ask verify-python verify
 
 install:
 	uv sync --all-groups
+	npm ci
 
 format:
 	uv run ruff format .
@@ -17,4 +18,15 @@ test:
 profile:
 	uv run open-agent-system verify --json
 
-verify: lint test profile
+worker:
+	npm run worker:check
+
+ask: export OPEN_AGENT_QUERY := $(value QUERY)
+ask: export OPEN_AGENT_SANDBOX := $(value SANDBOX)
+ask: export OPEN_AGENT_ATTEMPTS := $(value ATTEMPTS)
+ask:
+	@./integrations/nemoclaw/ask.sh
+
+verify-python: lint test profile
+
+verify: verify-python worker

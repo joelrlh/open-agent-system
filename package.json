@@ -1,0 +1,39 @@
+{
+  "name": "open-agent-system-deployment",
+  "version": "0.1.0-dev.0",
+  "private": true,
+  "description": "Deployment tooling for the Open Agent System research MCP fixture",
+  "scripts": {
+    "worker:check": "npm run worker:format-check && npm run worker:lint && npm run worker:typecheck && npm run worker:test && npm run worker:smoke && npm run worker:dry-run && npm run worker:bundle-audit",
+    "worker:bundle-audit": "node deploy/cloudflare-worker/test/bundle-audit.mjs",
+    "worker:deploy": "wrangler deploy --config deploy/cloudflare-worker/wrangler.jsonc",
+    "worker:dev": "wrangler dev --config deploy/cloudflare-worker/wrangler.jsonc",
+    "worker:dry-run": "wrangler deploy --dry-run --outdir ../../dist/cloudflare-worker --config deploy/cloudflare-worker/wrangler.jsonc",
+    "worker:format": "oxfmt --write deploy/cloudflare-worker package.json",
+    "worker:format-check": "oxfmt --check deploy/cloudflare-worker package.json",
+    "worker:lint": "oxlint --deny-warnings deploy/cloudflare-worker",
+    "worker:smoke": "node deploy/cloudflare-worker/test/smoke.mjs",
+    "worker:test": "vitest run --coverage --config deploy/cloudflare-worker/vitest.config.ts",
+    "worker:typecheck": "tsc --project deploy/cloudflare-worker/tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "agents": "0.18.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260722.1",
+    "@vitest/coverage-v8": "4.1.10",
+    "oxfmt": "0.60.0",
+    "oxlint": "1.75.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.10",
+    "wrangler": "4.113.0"
+  },
+  "overrides": {
+    "sharp": "0.35.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
