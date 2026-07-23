@@ -19,6 +19,14 @@ only deterministic checked-in sources and rejects unknown identifiers, malformed
 URIs, oversized requests, query strings, fragments, user info, ports, and
 unapproved hosts.
 
+The pinned declarative subagent loader does not support a specialist-specific
+tool allowlist; it exposes the managed read tools to both the orchestrator and
+researcher. OpenShell and the fixture prevent that inherited exposure from
+widening authority. Project instructions assign the tools to the researcher,
+and persisted-trace validation fails closed if the orchestrator calls them
+directly. This detects and suppresses a topology violation but is not equivalent
+to runtime role isolation.
+
 Headless managed execution must not use shell tools. Interactive approval and
 session behavior belong to the pinned Deep Agents Code runtime and are verified
 live; this repository does not implement a parallel approval service.
@@ -56,4 +64,6 @@ when upstream packages publish compatible fixes.
 
 Any unauthorized dispatch, missing denial signal, credential exposure,
 provenance forgery, prompt-injection escalation, unbounded output, tuple drift,
-or skipped live security case blocks a release.
+or skipped live security case blocks a release. Stable release is also blocked
+while the managed Nemotron route can complete with blank content or while
+specialist-only tool ownership lacks a reviewed preventive runtime mechanism.
