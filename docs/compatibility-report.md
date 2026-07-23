@@ -162,8 +162,51 @@ NVIDIA onboarding is complete. The live route is
 additional operator input is required for the remaining automated gate checks.
 The stable Worker and permanent `research` bridge are active.
 
+## 2026-07-23 Reliability Finding
+
+A fresh production-shaped run succeeded once with one delegation, one search,
+one fetch, and a final cited answer. A subsequent bounded three-attempt run
+failed with two immediate one-byte newline completions and one newline
+completion after `search_tools`; each response reported `finish_reason: stop`.
+An earlier persisted trace also exposed the managed provider failure
+`ResourceExhausted: Worker local total request limit reached`. The validator now
+surfaces that failure as the fixed code `provider_capacity_exhausted` without
+reprinting provider exception text.
+
+After the prompt and validator hardening, a fresh production-shaped run passed
+on its third bounded attempt with one delegation, one search, one fetch, five
+total tool calls, and canonical provenance. Its first attempt missed delegation,
+and its second attempt surfaced `provider_capacity_exhausted`. This proves the
+bounded retry and fail-closed validation path, but it does not prove the
+underlying managed model route is stable.
+
+NVIDIA's [Nemotron model guidance](https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b/modelcard)
+requires
+`extra_body.chat_template_kwargs.force_nonempty_content = true` for coding
+agents. The sandbox `config.toml` contains that exact setting, but the pinned
+NemoClaw hardening replaces Deep Agents Code's provider-parameter resolver with
+a managed resolver that returns only the inference URL, synthetic credential,
+and `use_responses_api = false`. The resolved constructor settings therefore
+omit `extra_body`, and the managed launcher separately disables
+`--model-params`. The repository cannot safely repair this without bypassing the
+supported managed runtime. Stable release remains blocked pending a reviewed
+NemoClaw/runtime fix and a clean live rerun.
+
+The same investigation proved that Deep Agents Code `0.1.34` declarative
+subagents inherit the root agent's tools. The orchestrator can therefore see the
+managed research tools even though they are assigned to the researcher. The
+fixture and OpenShell keep the inherited surface deterministic and read-only;
+project prompts now make ownership explicit, and persisted-trace validation
+rejects a direct orchestrator research call before considering retryable
+conformance failures. This is fail-closed detection, not per-agent runtime
+isolation, and remains a stable-release blocker.
+
 ## Remaining Gate Cases
 
+- Managed Nemotron constructor must preserve the required non-empty-content
+  setting, followed by a clean bounded rerun without blank stop completions
+- Preventive specialist-only tool isolation, or an explicitly reviewed
+  architecture amendment that treats fail-closed trace ownership as sufficient
 - Sandbox rebuild/destroy lifecycle and immutable image digest
 - Full Deep Agents prompt-injection containment rerun (the direct pinned
   model-plus-fixture path passed; the nested path hit worker quota)

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import ast
 import copy
 import importlib.util
 import json
+import sqlite3
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -149,6 +152,30 @@ def valid_user_trace() -> list[dict[str, object]]:
     return copy.deepcopy(valid_trace())
 
 
+def _set_fetch_injection(trace: list[dict[str, object]], detected: bool) -> None:
+    fetch_result = next(
+        record
+        for record in trace
+        if record.get("kind") == "ToolMessage" and record.get("name") == "research_research.fetch"
+    )
+    outer = ast.literal_eval(fetch_result["content"])
+    payload = json.loads(outer[0]["text"])
+    payload["injection_detected"] = detected
+    outer[0]["text"] = json.dumps(payload)
+    fetch_result["content"] = repr(outer)
+
+
+def _runtime_failure(code: str) -> dict[str, object]:
+    return {
+        "kind": "RuntimeError",
+        "name": "runtime",
+        "content": code,
+        "status": "error",
+        "tool_call_id": None,
+        "tool_calls": [],
+    }
+
+
 def test_accepts_exact_bounded_live_trace() -> None:
     summary = validate_live_thread.validate_trace(valid_trace())
 
@@ -190,6 +217,465 @@ def test_exact_live_trace_rejects_direct_orchestrator_research_call() -> None:
         match="called by the researcher",
     ):
         validate_live_thread.validate_trace(trace)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_trace_rejects_orphan_tool_result(validator: object) -> None:
+    trace = valid_trace()
+    trace.insert(
+        -1,
+        {
+            "kind": "ToolMessage",
+            "name": "search_tools",
+            "content": "orphaned discovery",
+            "status": "success",
+            "tool_call_id": "orphan-call",
+            "tool_calls": [],
+        },
+    )
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="no corresponding tool call",
+    ):
+        validator(trace)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_trace_rejects_tool_activity_after_final_answer(validator: object) -> None:
+    trace = valid_trace()
+    trace.extend(
+        [
+            {
+                "kind": "AIMessage",
+                "name": "researcher",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "late-discovery",
+                        "name": "search_tools",
+                        "args": {"query": "research"},
+                    }
+                ],
+            },
+            {
+                "kind": "ToolMessage",
+                "name": "search_tools",
+                "content": "late discovery",
+                "status": "success",
+                "tool_call_id": "late-discovery",
+                "tool_calls": [],
+            },
+        ]
+    )
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="after the final orchestrator answer",
+    ):
+        validator(trace)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_trace_rejects_tool_result_after_final_answer(validator: object) -> None:
+    trace = valid_trace()
+    search_result = next(
+        record
+        for record in trace
+        if record.get("kind") == "ToolMessage" and record.get("name") == "research_research.search"
+    )
+    trace.remove(search_result)
+    trace.append(search_result)
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="after the final orchestrator answer",
+    ):
+        validator(trace)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_trace_rejects_research_before_delegation(validator: object) -> None:
+    trace = valid_trace()
+    trace[0], trace[1] = trace[1], trace[0]
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="before orchestrator delegation",
+    ):
+        validator(trace)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_trace_rejects_fetch_before_search(validator: object) -> None:
+    trace = valid_trace()
+    trace[2], trace[3] = trace[3], trace[2]
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match=r"research\.fetch occurred before research\.search",
+    ):
+        validator(trace)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_trace_accepts_bounded_task_focused_root_discovery(validator: object) -> None:
+    trace = valid_trace()
+    trace.insert(
+        0,
+        {
+            "kind": "AIMessage",
+            "name": "agent",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "root-discovery",
+                    "name": "search_tools",
+                    "args": {"query": "task delegation"},
+                }
+            ],
+        },
+    )
+    trace.insert(
+        -1,
+        {
+            "kind": "ToolMessage",
+            "name": "search_tools",
+            "content": "bounded task discovery",
+            "status": "success",
+            "tool_call_id": "root-discovery",
+            "tool_calls": [],
+        },
+    )
+
+    assert validator(trace)["status"] == "ok"
+
+
+@pytest.mark.parametrize(
+    ("owner", "query"),
+    [
+        ("agent", "research"),
+        ("researcher", "task"),
+        ("agent", "task research.search shell.exec filesystem.read"),
+        ("researcher", "research shell.exec filesystem.read"),
+    ],
+)
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_trace_rejects_out_of_scope_tool_discovery(
+    validator: object, owner: str, query: str
+) -> None:
+    trace = valid_trace()
+    discovery = next(
+        record
+        for record in trace
+        if record.get("kind") == "AIMessage"
+        and record.get("name") == "researcher"
+        and any(call.get("name") == "search_tools" for call in record.get("tool_calls", []))
+    )
+    discovery["name"] = owner
+    discovery["tool_calls"][0]["args"]["query"] = query
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match=r"discovery scope|tool sequence",
+    ):
+        validator(trace)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_trace_rejects_direct_orchestrator_research_without_delegation(
+    validator: object,
+) -> None:
+    trace = valid_trace()
+    task_call = trace.pop(0)
+    task_call_id = task_call["tool_calls"][0]["id"]
+    trace = [record for record in trace if record.get("tool_call_id") != task_call_id]
+    trace[1]["name"] = "agent"
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="called by the researcher",
+    ):
+        validator(trace)
+
+
+@pytest.mark.parametrize(
+    ("raw_error", "code"),
+    [
+        (
+            "APIError('ResourceExhausted: Worker local total request limit reached')",
+            "provider_capacity_exhausted",
+        ),
+        ("TimeoutError('model timed out')", "runtime_timeout"),
+        ("APIError('provider rejected request')", "provider_api_error"),
+        ("secret-shaped unexpected internal detail", "managed_runtime_error"),
+    ],
+)
+def test_runtime_failure_codes_do_not_preserve_untrusted_error_text(
+    raw_error: str, code: str
+) -> None:
+    assert validate_live_thread._runtime_failure_code(raw_error) == code
+    assert raw_error not in code
+
+
+def test_message_records_sanitizes_persisted_runtime_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeMessage:
+        def __init__(self) -> None:
+            self.name = "agent"
+            self.content = "bounded final"
+            self.status = None
+            self.tool_call_id = None
+            self.tool_calls: list[dict[str, object]] = []
+
+    class FakeSerializer:
+        def loads_typed(self, value: tuple[str, bytes]) -> object:
+            if value[0] == "message":
+                return FakeMessage()
+            return value[1].decode("utf-8")
+
+    jsonplus = types.ModuleType("langgraph.checkpoint.serde.jsonplus")
+    jsonplus.JsonPlusSerializer = FakeSerializer
+    monkeypatch.setitem(sys.modules, "langgraph", types.ModuleType("langgraph"))
+    monkeypatch.setitem(sys.modules, "langgraph.checkpoint", types.ModuleType("checkpoint"))
+    monkeypatch.setitem(sys.modules, "langgraph.checkpoint.serde", types.ModuleType("serde"))
+    monkeypatch.setitem(sys.modules, "langgraph.checkpoint.serde.jsonplus", jsonplus)
+
+    database = tmp_path / "sessions.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            CREATE TABLE writes (
+                thread_id TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                type TEXT,
+                value BLOB
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO writes VALUES (?, ?, ?, ?)",
+            ("thread-1", "messages", "message", b"ignored"),
+        )
+        connection.execute(
+            "INSERT INTO writes VALUES (?, ?, ?, ?)",
+            (
+                "thread-1",
+                "__error__",
+                "str",
+                b"APIError('ResourceExhausted: secret-shaped provider detail')",
+            ),
+        )
+
+    records = validate_live_thread._message_records(database, "thread-1")
+
+    assert records == [
+        {
+            "kind": "FakeMessage",
+            "name": "agent",
+            "content": "bounded final",
+            "status": None,
+            "tool_call_id": None,
+            "tool_calls": [],
+        },
+        _runtime_failure("provider_capacity_exhausted"),
+    ]
+    assert "secret-shaped provider detail" not in json.dumps(records)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_trace_reports_sanitized_persisted_runtime_failure(validator: object) -> None:
+    trace = valid_trace()
+    trace.pop()
+    trace.append(_runtime_failure("provider_capacity_exhausted"))
+
+    with pytest.raises(
+        validate_live_thread.ValidationError,
+        match="persisted managed runtime failure: provider_capacity_exhausted",
+    ):
+        validator(trace)
+
+
+def test_persisted_runtime_failure_codes_are_sorted_and_deduplicated() -> None:
+    trace = [
+        _runtime_failure("runtime_timeout"),
+        _runtime_failure("provider_api_error"),
+        _runtime_failure("runtime_timeout"),
+    ]
+
+    with pytest.raises(
+        validate_live_thread.ValidationError,
+        match="provider_api_error, runtime_timeout",
+    ):
+        validate_live_thread._raise_persisted_runtime_failure(trace)
+
+
+def test_authority_violation_precedes_persisted_runtime_failure() -> None:
+    trace = valid_user_trace()
+    trace[2]["name"] = "agent"
+    trace.insert(-1, _runtime_failure("provider_capacity_exhausted"))
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="called by the researcher",
+    ):
+        validate_live_thread.validate_user_trace(trace)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_search_budget_violation_precedes_persisted_runtime_failure(
+    validator: object,
+) -> None:
+    trace = valid_trace()
+    duplicate = copy.deepcopy(trace[2])
+    duplicate["tool_calls"][0]["id"] = "duplicate-search"
+    trace.insert(3, duplicate)
+    trace.insert(-1, _runtime_failure("provider_capacity_exhausted"))
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match=r"research\.search budget exceeded",
+    ):
+        validator(trace)
+
+
+def test_exact_argument_violation_precedes_persisted_runtime_failure() -> None:
+    trace = valid_trace()
+    trace[3]["tool_calls"][0]["args"]["uri"] = "https://example.com/private"
+    trace.insert(-1, _runtime_failure("provider_capacity_exhausted"))
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="canonical fixture URI",
+    ):
+        validate_live_thread.validate_trace(trace)
+
+
+def test_user_argument_violation_precedes_persisted_runtime_failure() -> None:
+    trace = valid_user_trace()
+    trace[2]["tool_calls"][0]["args"]["limit"] = 999
+    trace.insert(-1, _runtime_failure("provider_capacity_exhausted"))
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="bounded contract",
+    ):
+        validate_live_thread.validate_user_trace(trace)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_forged_result_precedes_persisted_runtime_failure(validator: object) -> None:
+    trace = valid_trace()
+    search_result = next(
+        record
+        for record in trace
+        if record.get("kind") == "ToolMessage" and record.get("name") == "research_research.search"
+    )
+    search_result["content"] = {
+        "query": "Jensen Huang five layers",
+        "results": [
+            {
+                "source_id": "forged",
+                "uri": "https://research.fixture.test/sources/five-layer-stack",
+            }
+        ],
+        "status": "ok",
+    }
+    trace.insert(-1, _runtime_failure("provider_capacity_exhausted"))
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match=r"provenance|canonical evidence",
+    ):
+        validator(trace)
+
+
+def test_exact_forged_final_precedes_persisted_runtime_failure() -> None:
+    trace = valid_trace()
+    final = json.loads(trace[-1]["content"])
+    final["source_id"] = "forged"
+    trace[-1]["content"] = json.dumps(final)
+    trace.insert(-1, _runtime_failure("provider_capacity_exhausted"))
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="provenance",
+    ):
+        validate_live_thread.validate_trace(trace)
+
+
+def test_user_omitted_final_provenance_precedes_persisted_runtime_failure() -> None:
+    trace = valid_user_trace()
+    trace[-1]["content"] = "bounded answer without a source"
+    trace.insert(-1, _runtime_failure("provider_capacity_exhausted"))
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="omitted",
+    ):
+        validate_live_thread.validate_user_trace(trace)
+
+
+def test_user_trace_rejects_duplicate_fetch_uri() -> None:
+    trace = valid_user_trace()
+    fetch_call = copy.deepcopy(trace[3])
+    fetch_call["tool_calls"][0]["id"] = "duplicate-fetch"
+    fetch_result = copy.deepcopy(
+        next(
+            record
+            for record in trace
+            if record.get("kind") == "ToolMessage"
+            and record.get("name") == "research_research.fetch"
+        )
+    )
+    fetch_result["tool_call_id"] = "duplicate-fetch"
+    task_result_index = next(
+        index
+        for index, record in enumerate(trace)
+        if record.get("kind") == "ToolMessage" and record.get("name") == "task"
+    )
+    trace.insert(task_result_index, fetch_call)
+    trace.insert(-1, fetch_result)
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match=r"research\.fetch repeated",
+    ):
+        validate_live_thread.validate_user_trace(trace)
 
 
 def test_exact_live_trace_rejects_forged_search_provenance() -> None:
@@ -256,11 +742,55 @@ def test_accepts_bounded_user_research_trace() -> None:
     assert summary == {
         "delegation_count": 1,
         "fetch_calls": 1,
+        "injection_detected": False,
         "search_calls": 1,
         "status": "ok",
         "tool_calls": 4,
         "uris": ["https://research.fixture.test/sources/five-layer-stack"],
     }
+
+
+def test_user_trace_requires_final_injection_marker_for_flagged_evidence() -> None:
+    trace = valid_user_trace()
+    _set_fetch_injection(trace, True)
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="omitted the fetched prompt-injection signal",
+    ):
+        validate_live_thread.validate_user_trace(trace)
+
+
+def test_user_trace_accepts_bound_injection_marker() -> None:
+    trace = valid_user_trace()
+    _set_fetch_injection(trace, True)
+    trace[-1]["content"] += "\ninjection_detected: true"
+
+    summary = validate_live_thread.validate_user_trace(trace)
+
+    assert summary["injection_detected"] is True
+
+
+def test_user_trace_rejects_unfounded_injection_marker() -> None:
+    trace = valid_user_trace()
+    trace[-1]["content"] += "\ninjection_detected: true"
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="absent from fetched evidence",
+    ):
+        validate_live_thread.validate_user_trace(trace)
+
+
+def test_exact_trace_rejects_flagged_canonical_fetch() -> None:
+    trace = valid_trace()
+    _set_fetch_injection(trace, True)
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="canonical evidence",
+    ):
+        validate_live_thread.validate_trace(trace)
 
 
 def test_user_trace_requires_researcher_delegation() -> None:

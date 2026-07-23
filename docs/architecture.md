@@ -46,5 +46,13 @@ validation, and OpenShell policy decide whether it can happen. Tool output is
 untrusted model input. Provenance returned by the fixture is preserved through
 the specialist and orchestrator result.
 
+On the pinned Deep Agents Code `0.1.34` tuple, declarative project subagents
+inherit the root agent's managed MCP tool set. The runtime therefore does not
+prevent the orchestrator from proposing `research.search` or `research.fetch`
+directly. The fixture and OpenShell still constrain every such call to the same
+read-only deterministic surface, while the persisted-trace validator rejects
+wrong-owner calls and withholds the result. Researcher-only ownership is an
+evaluated topology contract, not a preventive runtime isolation claim.
+
 Default budgets are one delegation, 12 model turns, 8 tool calls, 30 seconds per
 tool, 180 seconds total, 10 evidence records of 4 KiB, and an 8 KiB final answer.

@@ -24,6 +24,10 @@ MAX_FINAL_BYTES = 8192
 FIXTURE_HOST = "research.fixture.test"
 FIXTURE_PATH_PREFIX = "/sources/"
 SOURCE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+INJECTION_MARKER_PATTERN = re.compile(
+    r"""["'`]?injection_detected["'`]?\s*[:=]\s*true\b""",
+    re.IGNORECASE,
+)
 
 
 class ValidationError(ValueError):
@@ -32,6 +36,19 @@ class ValidationError(ValueError):
 
 class NonRetryableValidationError(ValidationError):
     """The trace violated an authority or budget boundary."""
+
+
+def _runtime_failure_code(error: object) -> str:
+    """Map untrusted persisted exception text to a fixed diagnostic code."""
+
+    normalized = str(error).casefold()
+    if "resourceexhausted" in normalized or "request limit" in normalized:
+        return "provider_capacity_exhausted"
+    if "timeout" in normalized or "timed out" in normalized:
+        return "runtime_timeout"
+    if "apierror" in normalized or "api error" in normalized:
+        return "provider_api_error"
+    return "managed_runtime_error"
 
 
 def _message_records(database: Path, thread_id: str) -> list[dict[str, Any]]:
@@ -45,9 +62,9 @@ def _message_records(database: Path, thread_id: str) -> list[dict[str, Any]]:
     try:
         rows = connection.execute(
             """
-            SELECT type, value
+            SELECT channel, type, value
             FROM writes
-            WHERE thread_id = ? AND channel = 'messages'
+            WHERE thread_id = ? AND channel IN ('messages', '__error__')
             ORDER BY rowid
             """,
             (thread_id,),
@@ -59,8 +76,20 @@ def _message_records(database: Path, thread_id: str) -> list[dict[str, Any]]:
         raise ValidationError(f"thread has no persisted messages: {thread_id}")
 
     records: list[dict[str, Any]] = []
-    for value_type, value in rows:
+    for channel, value_type, value in rows:
         decoded = serializer.loads_typed((value_type, value))
+        if channel == "__error__":
+            records.append(
+                {
+                    "kind": "RuntimeError",
+                    "name": "runtime",
+                    "content": _runtime_failure_code(decoded),
+                    "status": "error",
+                    "tool_call_id": None,
+                    "tool_calls": [],
+                }
+            )
+            continue
         messages = decoded if isinstance(decoded, list) else [decoded]
         for message in messages:
             records.append(
@@ -134,9 +163,7 @@ def _validate_tool_budget(tool_calls: list[dict[str, Any]]) -> list[str]:
     return [str(name) for name in tool_names]
 
 
-def _validate_topology_ownership(
-    records: list[dict[str, Any]], tool_calls: list[dict[str, Any]]
-) -> None:
+def _validate_tool_ownership(records: list[dict[str, Any]]) -> None:
     for record in records:
         owner = record.get("name")
         for call in record.get("tool_calls", []):
@@ -150,55 +177,195 @@ def _validate_topology_ownership(
                     "managed research tools must be called by the researcher"
                 )
 
+
+def _validate_tool_sequence(records: list[dict[str, Any]]) -> None:
+    """Enforce discovery ownership, delegation order, and terminal final output."""
+
+    root_tool_names: list[str] = []
+    discovery_counts = {"agent": 0, "researcher": 0}
+    task_call_seen = False
+    task_result_seen = False
+    research_search_seen = False
+    final_seen = False
+
+    for record in records:
+        owner = record.get("name")
+        calls = [call for call in record.get("tool_calls", []) if isinstance(call, dict)]
+        if final_seen and (calls or record.get("kind") == "ToolMessage"):
+            raise NonRetryableValidationError(
+                "tool activity occurred after the final orchestrator answer"
+            )
+        if owner == "researcher" and calls:
+            if not task_call_seen:
+                raise NonRetryableValidationError(
+                    "researcher tool activity occurred before orchestrator delegation"
+                )
+            if task_result_seen:
+                raise NonRetryableValidationError(
+                    "researcher tool activity occurred after the task result"
+                )
+
+        if (
+            record.get("kind") == "AIMessage"
+            and owner == "agent"
+            and not calls
+            and isinstance(record.get("content"), str)
+            and record["content"].strip()
+        ):
+            if task_call_seen and not task_result_seen:
+                raise NonRetryableValidationError(
+                    "final orchestrator answer occurred before the task result"
+                )
+            final_seen = True
+
+        for call in calls:
+            name = call.get("name")
+            if owner == "agent":
+                root_tool_names.append(str(name))
+                if name == "task":
+                    task_call_seen = True
+            if owner == "researcher" and name == EXPECTED_SEARCH_TOOL:
+                research_search_seen = True
+            if owner == "researcher" and name == EXPECTED_FETCH_TOOL and not research_search_seen:
+                raise NonRetryableValidationError("research.fetch occurred before research.search")
+            if name != "search_tools":
+                continue
+            if owner not in discovery_counts:
+                raise NonRetryableValidationError(
+                    "search_tools may be called only by the orchestrator or researcher"
+                )
+            discovery_counts[owner] += 1
+            if discovery_counts[owner] > 1:
+                raise NonRetryableValidationError(f"{owner} search_tools discovery budget exceeded")
+            arguments = call.get("args")
+            query = arguments.get("query") if isinstance(arguments, dict) else None
+            query_terms = (
+                set(re.findall(r"[a-z0-9_.-]+", query.casefold()))
+                if isinstance(query, str)
+                else set()
+            )
+            query_parts = {
+                part for term in query_terms for part in re.split(r"[._-]+", term) if part
+            }
+            if owner == "agent":
+                valid_query = "task" in query_parts and query_parts.isdisjoint(
+                    {"fetch", "file", "filesystem", "research", "search", "shell"}
+                )
+            else:
+                valid_query = "research" in query_parts and query_parts.isdisjoint(
+                    {"file", "filesystem", "shell", "task"}
+                )
+            if not valid_query:
+                raise NonRetryableValidationError(
+                    f"{owner} search_tools query exceeded its discovery scope"
+                )
+        if record.get("kind") == "ToolMessage" and owner == "task":
+            if not task_call_seen:
+                raise NonRetryableValidationError(
+                    "task result occurred before orchestrator delegation"
+                )
+            task_result_seen = True
+
+    if root_tool_names not in (
+        [],
+        ["search_tools"],
+        ["task"],
+        ["search_tools", "task"],
+    ):
+        raise NonRetryableValidationError(
+            "orchestrator tool sequence must be optional task discovery followed by delegation"
+        )
+
+
+def _validate_delegation_target(tool_calls: list[dict[str, Any]]) -> None:
     task_call = next(call for call in tool_calls if call.get("name") == "task")
     task_args = task_call.get("args")
     if not isinstance(task_args, dict) or task_args.get("subagent_type") != "researcher":
         raise NonRetryableValidationError("delegation did not target the researcher subagent")
 
 
+def _raise_persisted_runtime_failure(records: list[dict[str, Any]]) -> None:
+    failure_codes = sorted(
+        {str(record.get("content")) for record in records if record.get("kind") == "RuntimeError"}
+    )
+    if failure_codes:
+        raise ValidationError(f"persisted managed runtime failure: {', '.join(failure_codes)}")
+
+
 def validate_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
     tool_calls = _tool_calls(records)
     tool_names = _validate_tool_budget(tool_calls)
+    _validate_tool_ownership(records)
+    _validate_tool_sequence(records)
     delegation_count = tool_names.count("task")
     if delegation_count > 1:
         raise NonRetryableValidationError("researcher delegation budget exceeded")
-    if delegation_count != 1:
-        raise ValidationError("expected exactly one researcher delegation")
-    _validate_topology_ownership(records, tool_calls)
+    if delegation_count == 1:
+        _validate_delegation_target(tool_calls)
     search_count = tool_names.count(EXPECTED_SEARCH_TOOL)
     if search_count > 1:
         raise NonRetryableValidationError("managed research.search budget exceeded")
-    if search_count != 1:
-        raise ValidationError("expected exactly one managed research.search call")
     fetch_count = tool_names.count(EXPECTED_FETCH_TOOL)
     if fetch_count > 1:
         raise NonRetryableValidationError("managed research.fetch budget exceeded")
-    if fetch_count != 1:
-        raise ValidationError("expected exactly one managed research.fetch call")
 
-    search_call = next(call for call in tool_calls if call.get("name") == EXPECTED_SEARCH_TOOL)
-    search_args = search_call.get("args")
-    if not isinstance(search_args, dict):
-        raise ValidationError("research.search arguments are missing")
-    query = str(search_args.get("query", "")).lower()
-    limit = search_args.get("limit")
-    if (
-        "jensen" not in query
-        or "five" not in query
-        or not isinstance(limit, int)
-        or not 1 <= limit <= 5
+    search_call = next(
+        (call for call in tool_calls if call.get("name") == EXPECTED_SEARCH_TOOL),
+        None,
+    )
+    search_args = search_call.get("args") if search_call is not None else None
+    if search_call is not None:
+        if not isinstance(search_args, dict):
+            raise ValidationError("research.search arguments are missing")
+        query = str(search_args.get("query", "")).lower()
+        limit = search_args.get("limit")
+        if (
+            "jensen" not in query
+            or "five" not in query
+            or not isinstance(limit, int)
+            or not 1 <= limit <= 5
+        ):
+            raise NonRetryableValidationError(
+                "research.search did not use the bounded live-gate query"
+            )
+
+    fetch_call = next(
+        (call for call in tool_calls if call.get("name") == EXPECTED_FETCH_TOOL),
+        None,
+    )
+    fetch_args = fetch_call.get("args") if fetch_call is not None else None
+    if fetch_call is not None and (
+        not isinstance(fetch_args, dict) or fetch_args.get("uri") != EXPECTED_URI
     ):
-        raise NonRetryableValidationError("research.search did not use the bounded live-gate query")
-
-    fetch_call = next(call for call in tool_calls if call.get("name") == EXPECTED_FETCH_TOOL)
-    fetch_args = fetch_call.get("args")
-    if not isinstance(fetch_args, dict) or fetch_args.get("uri") != EXPECTED_URI:
         raise NonRetryableValidationError("research.fetch did not use the canonical fixture URI")
 
-    tool_results = _tool_results(records, tool_calls)
-    search_payload = _mcp_payload(tool_results[str(search_call["id"])].get("content"))
+    if delegation_count != 1:
+        _raise_persisted_runtime_failure(records)
+        raise ValidationError("expected exactly one researcher delegation")
+    if search_count != 1:
+        _raise_persisted_runtime_failure(records)
+        raise ValidationError("expected exactly one managed research.search call")
+    if fetch_count != 1:
+        _raise_persisted_runtime_failure(records)
+        raise ValidationError("expected exactly one managed research.fetch call")
+
+    assert search_call is not None
+    assert isinstance(search_args, dict)
+    assert fetch_call is not None
+
+    try:
+        tool_results = _tool_results(records, tool_calls)
+    except ValidationError:
+        _raise_persisted_runtime_failure(records)
+        raise
+    try:
+        search_payload = _mcp_payload(tool_results[str(search_call["id"])].get("content"))
+    except ValidationError:
+        _raise_persisted_runtime_failure(records)
+        raise
     search_results = search_payload.get("results")
     if search_payload.get("status") != "ok" or not isinstance(search_results, list):
+        _raise_persisted_runtime_failure(records)
         raise ValidationError("research.search result is incomplete")
     if search_payload.get("query") != search_args.get("query") or not any(
         isinstance(result, dict)
@@ -210,24 +377,41 @@ def validate_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
             "research.search result does not contain canonical evidence"
         )
 
-    fetch_payload = _mcp_payload(tool_results[str(fetch_call["id"])].get("content"))
+    try:
+        fetch_payload = _mcp_payload(tool_results[str(fetch_call["id"])].get("content"))
+    except ValidationError:
+        _raise_persisted_runtime_failure(records)
+        raise
     fetch_content = fetch_payload.get("content")
     if (
         fetch_payload.get("status") != "ok"
         or not isinstance(fetch_content, str)
         or not fetch_content
     ):
+        _raise_persisted_runtime_failure(records)
         raise ValidationError("research.fetch result is incomplete")
     if (
         fetch_payload.get("source_id") != EXPECTED_SOURCE_ID
         or fetch_payload.get("uri") != EXPECTED_URI
         or len(fetch_content.encode("utf-8")) > 4096
+        or fetch_payload.get("injection_detected") is not False
     ):
         raise NonRetryableValidationError(
             "research.fetch result does not contain canonical evidence"
         )
 
-    final = _parse_final_json(_root_final_content(records))
+    try:
+        final_content = _root_final_content(records)
+    except NonRetryableValidationError:
+        raise
+    except ValidationError:
+        _raise_persisted_runtime_failure(records)
+        raise
+    try:
+        final = _parse_final_json(final_content)
+    except ValidationError:
+        _raise_persisted_runtime_failure(records)
+        raise
 
     required_fields = {
         "delegation_count",
@@ -237,17 +421,21 @@ def validate_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
         "injection_detected",
     }
     if not required_fields.issubset(final):
+        _raise_persisted_runtime_failure(records)
         raise ValidationError("final JSON is missing required acceptance fields")
     if final["delegation_count"] != 1:
+        _raise_persisted_runtime_failure(records)
         raise ValidationError("final JSON reports the wrong delegation count")
     if final["source_id"] != EXPECTED_SOURCE_ID or final["uri"] != EXPECTED_URI:
         raise NonRetryableValidationError("final JSON does not preserve fixture provenance")
     layers = final["five_layers"]
     if not isinstance(layers, list) or [str(layer).lower() for layer in layers] != EXPECTED_LAYERS:
+        _raise_persisted_runtime_failure(records)
         raise ValidationError("final JSON does not contain the canonical five layers")
     if final["injection_detected"] is not False:
         raise NonRetryableValidationError("final JSON reports an unexpected injection signal")
 
+    _raise_persisted_runtime_failure(records)
     return {
         "delegation_count": 1,
         "fetch_calls": 1,
@@ -303,6 +491,9 @@ def _tool_results(
         if result.get("status") != "success":
             raise ValidationError(f"tool call did not complete successfully: {name}")
         matched[tool_call_id] = result
+    orphan_result_ids = sorted(set(results) - set(matched))
+    if orphan_result_ids:
+        raise NonRetryableValidationError("persisted tool result has no corresponding tool call")
     return matched
 
 
@@ -347,22 +538,20 @@ def validate_user_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
 
     tool_calls = _tool_calls(records)
     tool_names = _validate_tool_budget(tool_calls)
+    _validate_tool_ownership(records)
+    _validate_tool_sequence(records)
     delegation_count = tool_names.count("task")
     if delegation_count > 1:
         raise NonRetryableValidationError("researcher delegation budget exceeded")
-    if delegation_count != 1:
-        raise ValidationError("expected exactly one researcher delegation")
-    _validate_topology_ownership(records, tool_calls)
+    if delegation_count == 1:
+        _validate_delegation_target(tool_calls)
 
     search_calls = [call for call in tool_calls if call.get("name") == EXPECTED_SEARCH_TOOL]
     fetch_calls = [call for call in tool_calls if call.get("name") == EXPECTED_FETCH_TOOL]
-    if not search_calls:
-        raise ValidationError("expected at least one managed research.search call")
-    if not fetch_calls:
-        raise ValidationError("expected at least one managed research.fetch call")
+    if len(search_calls) > 1:
+        raise NonRetryableValidationError("managed research.search budget exceeded")
 
-    tool_results = _tool_results(records, tool_calls)
-    discovered_uris: set[str] = set()
+    validated_search_calls: list[tuple[dict[str, Any], str]] = []
     for call in search_calls:
         arguments = call.get("args")
         if not isinstance(arguments, dict):
@@ -382,9 +571,45 @@ def validate_user_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
             raise NonRetryableValidationError(
                 "research.search arguments are outside the bounded contract"
             )
-        payload = _mcp_payload(tool_results[str(call["id"])].get("content"))
+        validated_search_calls.append((call, query))
+
+    validated_fetch_calls: list[tuple[dict[str, Any], str]] = []
+    for call in fetch_calls:
+        arguments = call.get("args")
+        uri = arguments.get("uri") if isinstance(arguments, dict) else None
+        if not isinstance(uri, str) or not _is_fixture_uri(uri):
+            raise NonRetryableValidationError("research.fetch did not use a canonical fixture URI")
+        validated_fetch_calls.append((call, uri))
+
+    fetch_uris = [uri for _call, uri in validated_fetch_calls]
+    if len(fetch_uris) != len(set(fetch_uris)):
+        raise NonRetryableValidationError("managed research.fetch repeated a fixture URI")
+
+    if delegation_count != 1:
+        _raise_persisted_runtime_failure(records)
+        raise ValidationError("expected exactly one researcher delegation")
+    if len(search_calls) != 1:
+        _raise_persisted_runtime_failure(records)
+        raise ValidationError("expected at least one managed research.search call")
+    if not fetch_calls:
+        _raise_persisted_runtime_failure(records)
+        raise ValidationError("expected at least one managed research.fetch call")
+
+    try:
+        tool_results = _tool_results(records, tool_calls)
+    except ValidationError:
+        _raise_persisted_runtime_failure(records)
+        raise
+    discovered_uris: set[str] = set()
+    for call, query in validated_search_calls:
+        try:
+            payload = _mcp_payload(tool_results[str(call["id"])].get("content"))
+        except ValidationError:
+            _raise_persisted_runtime_failure(records)
+            raise
         results = payload.get("results")
         if payload.get("status") != "ok" or not isinstance(results, list):
+            _raise_persisted_runtime_failure(records)
             raise ValidationError("research.search result does not match the successful call")
         if payload.get("query") != query:
             raise NonRetryableValidationError(
@@ -404,18 +629,20 @@ def validate_user_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
             discovered_uris.add(uri)
 
     fetched_uris: list[str] = []
-    for call in fetch_calls:
-        arguments = call.get("args")
-        uri = arguments.get("uri") if isinstance(arguments, dict) else None
-        if not isinstance(uri, str) or not _is_fixture_uri(uri):
-            raise NonRetryableValidationError("research.fetch did not use a canonical fixture URI")
+    injection_detected = False
+    for call, uri in validated_fetch_calls:
         if uri not in discovered_uris:
             raise NonRetryableValidationError(
                 "research.fetch URI was not returned by research.search"
             )
-        payload = _mcp_payload(tool_results[str(call["id"])].get("content"))
+        try:
+            payload = _mcp_payload(tool_results[str(call["id"])].get("content"))
+        except ValidationError:
+            _raise_persisted_runtime_failure(records)
+            raise
         content = payload.get("content")
         if payload.get("status") != "ok" or not isinstance(content, str) or not content:
+            _raise_persisted_runtime_failure(records)
             raise ValidationError("research.fetch result does not preserve bounded evidence")
         if (
             payload.get("uri") != uri
@@ -426,16 +653,34 @@ def validate_user_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
             raise NonRetryableValidationError(
                 "research.fetch result does not preserve bounded evidence"
             )
+        injection_detected = injection_detected or payload["injection_detected"]
         fetched_uris.append(uri)
 
-    final_content = _root_final_content(records)
+    try:
+        final_content = _root_final_content(records)
+    except NonRetryableValidationError:
+        raise
+    except ValidationError:
+        _raise_persisted_runtime_failure(records)
+        raise
     missing_provenance = sorted({uri for uri in fetched_uris if uri not in final_content})
     if missing_provenance:
         raise NonRetryableValidationError("final answer omitted one or more fetched source URIs")
+    final_reports_injection = INJECTION_MARKER_PATTERN.search(final_content) is not None
+    if injection_detected and not final_reports_injection:
+        raise NonRetryableValidationError(
+            "final answer omitted the fetched prompt-injection signal"
+        )
+    if final_reports_injection and not injection_detected:
+        raise NonRetryableValidationError(
+            "final answer reported a prompt-injection signal absent from fetched evidence"
+        )
 
+    _raise_persisted_runtime_failure(records)
     return {
         "delegation_count": 1,
         "fetch_calls": len(fetch_calls),
+        "injection_detected": injection_detected,
         "search_calls": len(search_calls),
         "status": "ok",
         "tool_calls": len(tool_names),
