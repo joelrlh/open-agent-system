@@ -3,7 +3,9 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import sqlite3
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -149,6 +151,17 @@ def valid_user_trace() -> list[dict[str, object]]:
     return copy.deepcopy(valid_trace())
 
 
+def _runtime_failure(code: str) -> dict[str, object]:
+    return {
+        "kind": "RuntimeError",
+        "name": "runtime",
+        "content": code,
+        "status": "error",
+        "tool_call_id": None,
+        "tool_calls": [],
+    }
+
+
 def test_accepts_exact_bounded_live_trace() -> None:
     summary = validate_live_thread.validate_trace(valid_trace())
 
@@ -190,6 +203,195 @@ def test_exact_live_trace_rejects_direct_orchestrator_research_call() -> None:
         match="called by the researcher",
     ):
         validate_live_thread.validate_trace(trace)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_trace_rejects_direct_orchestrator_research_without_delegation(
+    validator: object,
+) -> None:
+    trace = valid_trace()
+    task_call = trace.pop(0)
+    task_call_id = task_call["tool_calls"][0]["id"]
+    trace = [record for record in trace if record.get("tool_call_id") != task_call_id]
+    trace[1]["name"] = "agent"
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="called by the researcher",
+    ):
+        validator(trace)
+
+
+@pytest.mark.parametrize(
+    ("raw_error", "code"),
+    [
+        (
+            "APIError('ResourceExhausted: Worker local total request limit reached')",
+            "provider_capacity_exhausted",
+        ),
+        ("TimeoutError('model timed out')", "runtime_timeout"),
+        ("APIError('provider rejected request')", "provider_api_error"),
+        ("secret-shaped unexpected internal detail", "managed_runtime_error"),
+    ],
+)
+def test_runtime_failure_codes_do_not_preserve_untrusted_error_text(
+    raw_error: str, code: str
+) -> None:
+    assert validate_live_thread._runtime_failure_code(raw_error) == code
+    assert raw_error not in code
+
+
+def test_message_records_sanitizes_persisted_runtime_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeMessage:
+        def __init__(self) -> None:
+            self.name = "agent"
+            self.content = "bounded final"
+            self.status = None
+            self.tool_call_id = None
+            self.tool_calls: list[dict[str, object]] = []
+
+    class FakeSerializer:
+        def loads_typed(self, value: tuple[str, bytes]) -> object:
+            if value[0] == "message":
+                return FakeMessage()
+            return value[1].decode("utf-8")
+
+    jsonplus = types.ModuleType("langgraph.checkpoint.serde.jsonplus")
+    jsonplus.JsonPlusSerializer = FakeSerializer
+    monkeypatch.setitem(sys.modules, "langgraph", types.ModuleType("langgraph"))
+    monkeypatch.setitem(sys.modules, "langgraph.checkpoint", types.ModuleType("checkpoint"))
+    monkeypatch.setitem(sys.modules, "langgraph.checkpoint.serde", types.ModuleType("serde"))
+    monkeypatch.setitem(sys.modules, "langgraph.checkpoint.serde.jsonplus", jsonplus)
+
+    database = tmp_path / "sessions.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            CREATE TABLE writes (
+                thread_id TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                type TEXT,
+                value BLOB
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO writes VALUES (?, ?, ?, ?)",
+            ("thread-1", "messages", "message", b"ignored"),
+        )
+        connection.execute(
+            "INSERT INTO writes VALUES (?, ?, ?, ?)",
+            (
+                "thread-1",
+                "__error__",
+                "str",
+                b"APIError('ResourceExhausted: secret-shaped provider detail')",
+            ),
+        )
+
+    records = validate_live_thread._message_records(database, "thread-1")
+
+    assert records == [
+        {
+            "kind": "FakeMessage",
+            "name": "agent",
+            "content": "bounded final",
+            "status": None,
+            "tool_call_id": None,
+            "tool_calls": [],
+        },
+        _runtime_failure("provider_capacity_exhausted"),
+    ]
+    assert "secret-shaped provider detail" not in json.dumps(records)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_trace_reports_sanitized_persisted_runtime_failure(validator: object) -> None:
+    trace = valid_trace()
+    trace.pop()
+    trace.append(_runtime_failure("provider_capacity_exhausted"))
+
+    with pytest.raises(
+        validate_live_thread.ValidationError,
+        match="persisted managed runtime failure: provider_capacity_exhausted",
+    ):
+        validator(trace)
+
+
+def test_persisted_runtime_failure_codes_are_sorted_and_deduplicated() -> None:
+    trace = [
+        _runtime_failure("runtime_timeout"),
+        _runtime_failure("provider_api_error"),
+        _runtime_failure("runtime_timeout"),
+    ]
+
+    with pytest.raises(
+        validate_live_thread.ValidationError,
+        match="provider_api_error, runtime_timeout",
+    ):
+        validate_live_thread._raise_persisted_runtime_failure(trace)
+
+
+def test_authority_violation_precedes_persisted_runtime_failure() -> None:
+    trace = valid_user_trace()
+    trace[2]["name"] = "agent"
+    trace.insert(-1, _runtime_failure("provider_capacity_exhausted"))
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="called by the researcher",
+    ):
+        validate_live_thread.validate_user_trace(trace)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_search_budget_violation_precedes_persisted_runtime_failure(
+    validator: object,
+) -> None:
+    trace = valid_trace()
+    duplicate = copy.deepcopy(trace[2])
+    duplicate["tool_calls"][0]["id"] = "duplicate-search"
+    trace.insert(3, duplicate)
+    trace.insert(-1, _runtime_failure("provider_capacity_exhausted"))
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match=r"research\.search budget exceeded",
+    ):
+        validator(trace)
+
+
+def test_user_trace_rejects_duplicate_fetch_uri() -> None:
+    trace = valid_user_trace()
+    fetch_call = copy.deepcopy(trace[3])
+    fetch_call["tool_calls"][0]["id"] = "duplicate-fetch"
+    fetch_result = copy.deepcopy(
+        next(
+            record
+            for record in trace
+            if record.get("kind") == "ToolMessage"
+            and record.get("name") == "research_research.fetch"
+        )
+    )
+    fetch_result["tool_call_id"] = "duplicate-fetch"
+    trace[-1:-1] = [fetch_call, fetch_result]
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match=r"research\.fetch repeated",
+    ):
+        validate_live_thread.validate_user_trace(trace)
 
 
 def test_exact_live_trace_rejects_forged_search_provenance() -> None:

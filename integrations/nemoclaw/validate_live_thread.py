@@ -34,6 +34,19 @@ class NonRetryableValidationError(ValidationError):
     """The trace violated an authority or budget boundary."""
 
 
+def _runtime_failure_code(error: object) -> str:
+    """Map untrusted persisted exception text to a fixed diagnostic code."""
+
+    normalized = str(error).casefold()
+    if "resourceexhausted" in normalized or "request limit" in normalized:
+        return "provider_capacity_exhausted"
+    if "timeout" in normalized or "timed out" in normalized:
+        return "runtime_timeout"
+    if "apierror" in normalized or "api error" in normalized:
+        return "provider_api_error"
+    return "managed_runtime_error"
+
+
 def _message_records(database: Path, thread_id: str) -> list[dict[str, Any]]:
     try:
         from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
@@ -45,9 +58,9 @@ def _message_records(database: Path, thread_id: str) -> list[dict[str, Any]]:
     try:
         rows = connection.execute(
             """
-            SELECT type, value
+            SELECT channel, type, value
             FROM writes
-            WHERE thread_id = ? AND channel = 'messages'
+            WHERE thread_id = ? AND channel IN ('messages', '__error__')
             ORDER BY rowid
             """,
             (thread_id,),
@@ -59,8 +72,20 @@ def _message_records(database: Path, thread_id: str) -> list[dict[str, Any]]:
         raise ValidationError(f"thread has no persisted messages: {thread_id}")
 
     records: list[dict[str, Any]] = []
-    for value_type, value in rows:
+    for channel, value_type, value in rows:
         decoded = serializer.loads_typed((value_type, value))
+        if channel == "__error__":
+            records.append(
+                {
+                    "kind": "RuntimeError",
+                    "name": "runtime",
+                    "content": _runtime_failure_code(decoded),
+                    "status": "error",
+                    "tool_call_id": None,
+                    "tool_calls": [],
+                }
+            )
+            continue
         messages = decoded if isinstance(decoded, list) else [decoded]
         for message in messages:
             records.append(
@@ -134,9 +159,7 @@ def _validate_tool_budget(tool_calls: list[dict[str, Any]]) -> list[str]:
     return [str(name) for name in tool_names]
 
 
-def _validate_topology_ownership(
-    records: list[dict[str, Any]], tool_calls: list[dict[str, Any]]
-) -> None:
+def _validate_tool_ownership(records: list[dict[str, Any]]) -> None:
     for record in records:
         owner = record.get("name")
         for call in record.get("tool_calls", []):
@@ -150,29 +173,42 @@ def _validate_topology_ownership(
                     "managed research tools must be called by the researcher"
                 )
 
+
+def _validate_delegation_target(tool_calls: list[dict[str, Any]]) -> None:
     task_call = next(call for call in tool_calls if call.get("name") == "task")
     task_args = task_call.get("args")
     if not isinstance(task_args, dict) or task_args.get("subagent_type") != "researcher":
         raise NonRetryableValidationError("delegation did not target the researcher subagent")
 
 
+def _raise_persisted_runtime_failure(records: list[dict[str, Any]]) -> None:
+    failure_codes = sorted(
+        {str(record.get("content")) for record in records if record.get("kind") == "RuntimeError"}
+    )
+    if failure_codes:
+        raise ValidationError(f"persisted managed runtime failure: {', '.join(failure_codes)}")
+
+
 def validate_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
     tool_calls = _tool_calls(records)
     tool_names = _validate_tool_budget(tool_calls)
+    _validate_tool_ownership(records)
     delegation_count = tool_names.count("task")
     if delegation_count > 1:
         raise NonRetryableValidationError("researcher delegation budget exceeded")
-    if delegation_count != 1:
-        raise ValidationError("expected exactly one researcher delegation")
-    _validate_topology_ownership(records, tool_calls)
+    if delegation_count == 1:
+        _validate_delegation_target(tool_calls)
     search_count = tool_names.count(EXPECTED_SEARCH_TOOL)
     if search_count > 1:
         raise NonRetryableValidationError("managed research.search budget exceeded")
-    if search_count != 1:
-        raise ValidationError("expected exactly one managed research.search call")
     fetch_count = tool_names.count(EXPECTED_FETCH_TOOL)
     if fetch_count > 1:
         raise NonRetryableValidationError("managed research.fetch budget exceeded")
+    _raise_persisted_runtime_failure(records)
+    if delegation_count != 1:
+        raise ValidationError("expected exactly one researcher delegation")
+    if search_count != 1:
+        raise ValidationError("expected exactly one managed research.search call")
     if fetch_count != 1:
         raise ValidationError("expected exactly one managed research.fetch call")
 
@@ -347,16 +383,31 @@ def validate_user_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
 
     tool_calls = _tool_calls(records)
     tool_names = _validate_tool_budget(tool_calls)
+    _validate_tool_ownership(records)
     delegation_count = tool_names.count("task")
     if delegation_count > 1:
         raise NonRetryableValidationError("researcher delegation budget exceeded")
-    if delegation_count != 1:
-        raise ValidationError("expected exactly one researcher delegation")
-    _validate_topology_ownership(records, tool_calls)
+    if delegation_count == 1:
+        _validate_delegation_target(tool_calls)
 
     search_calls = [call for call in tool_calls if call.get("name") == EXPECTED_SEARCH_TOOL]
     fetch_calls = [call for call in tool_calls if call.get("name") == EXPECTED_FETCH_TOOL]
-    if not search_calls:
+    if len(search_calls) > 1:
+        raise NonRetryableValidationError("managed research.search budget exceeded")
+
+    fetch_uris = [
+        arguments.get("uri")
+        for call in fetch_calls
+        if isinstance((arguments := call.get("args")), dict)
+        and isinstance(arguments.get("uri"), str)
+    ]
+    if len(fetch_uris) != len(set(fetch_uris)):
+        raise NonRetryableValidationError("managed research.fetch repeated a fixture URI")
+
+    _raise_persisted_runtime_failure(records)
+    if delegation_count != 1:
+        raise ValidationError("expected exactly one researcher delegation")
+    if len(search_calls) != 1:
         raise ValidationError("expected at least one managed research.search call")
     if not fetch_calls:
         raise ValidationError("expected at least one managed research.fetch call")

@@ -34,6 +34,22 @@ def test_tool_name_authority_is_enforced_by_the_fixture_surface() -> None:
     assert server_source.count("@server.tool") == 2
 
 
+def test_agent_profiles_make_delegation_and_fetch_order_explicit() -> None:
+    root = Path(__file__).resolve().parents[1]
+    orchestrator = (root / ".deepagents" / "AGENTS.md").read_text(encoding="utf-8")
+    researcher = (root / ".deepagents" / "agents" / "researcher" / "AGENTS.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "one `search_tools` lookup only to discover" in orchestrator
+    assert "Your next action must be `task`" in orchestrator
+    assert "belong to the researcher" in orchestrator
+    assert "When `task` returns, call no more tools" in orchestrator
+    assert "make one `search_tools` lookup only" in researcher
+    assert "fetch each selected" in researcher
+    assert "never fetch the same URI again" in researcher
+
+
 def test_live_gate_scopes_credentials_and_restores_policy_before_teardown() -> None:
     root = Path(__file__).resolve().parents[1]
     script = (root / "integrations/nemoclaw/live-smoke.sh").read_text(encoding="utf-8")
