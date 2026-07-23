@@ -46,15 +46,32 @@ paste a provider key into a prompt or add it to this repository.
 
 ## Managed Runtime
 
-The production-shaped entry point is owned by NemoClaw:
+Run a supported fixture-research task with:
 
 ```bash
-nemo-deepagents open-agent-system agent -n "Research the configured fixture and return cited evidence."
+make ask QUERY="Research Jensen Huang's five-layer AI stack."
 ```
 
-The managed runtime discovers `.deepagents/AGENTS.md`, the `researcher`
-subagent, and `$agent-retrieval`. OpenShell remains the final authority for
-filesystem, process, network, MCP, and credential access.
+The launcher checks that the permanent `research` bridge is credential-ready,
+uploads only the declarative agent profile and trace validator to a disposable
+Git-root workspace, and invokes the NemoClaw-managed Deep Agents Code runtime
+there. It permits at most three attempts for transient provider or
+model-conformance failures. A result is printed only after its persisted trace
+proves one `researcher` delegation, approved research tools and arguments,
+canonical fixture provenance, and the checked-in budgets. The disposable
+workspace is removed on exit.
+
+Use `ATTEMPTS=1` or `ATTEMPTS=2` to lower the retry budget, or
+`SANDBOX=another-name` for a separately onboarded compatible sandbox:
+
+```bash
+make ask ATTEMPTS=1 QUERY="Summarize the configured architecture evidence."
+```
+
+The direct `nemo-deepagents ... agent` wrapper starts in `/sandbox`; it does not
+upload this checkout's `.deepagents` profile. Use `make ask` for project-aware
+runs. OpenShell remains the final authority for filesystem, process, network,
+MCP, and credential access.
 
 ## Stable Research MCP
 

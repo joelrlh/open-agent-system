@@ -76,7 +76,17 @@ Security precedence is monotonic: agent instructions cannot grant authority; Lan
 
 The repository owns declarative project instructions, subagent definitions, skills, the deterministic MCP fixture, policies, and evaluation contracts. NemoClaw owns onboarding and the supported Deep Agents Code launcher; OpenShell owns the sandbox and gateway. The compatibility spike disproved the earlier custom Python-launcher assumption: NemoClaw's pinned launcher uses an isolated read-only environment and intentionally disables project autoloading, executable hooks, unmanaged MCP files, and provider overrides.
 
-The production-shaped command is `nemo-deepagents open-agent-system agent -n "<bounded task>"`. The checked-out workspace supplies `.deepagents/AGENTS.md`, `.deepagents/agents/<name>/AGENTS.md`, and `.deepagents/skills/<name>/SKILL.md`; NemoClaw supplies the managed MCP projection and inference route. The live gate satisfied the T3 precondition on 2026-07-22: after adding a disposable Git-root marker to the uploaded workspace, the exact managed path discovered the profile, reached managed inference and the HTTPS MCP fixture, delegated once, and returned cited evidence.
+The operator command is `make ask QUERY="<bounded research task>"`. The
+repository launcher uploads `.deepagents/AGENTS.md`,
+`.deepagents/agents/<name>/AGENTS.md`, and
+`.deepagents/skills/<name>/SKILL.md` into a disposable Git-root workspace, then
+invokes the NemoClaw-managed `dcode` launcher there; NemoClaw supplies the
+managed MCP projection and inference route. The direct
+`nemo-deepagents ... agent` wrapper starts at `/sandbox` and does not sync the
+host checkout. The live gate satisfied the T3 precondition on 2026-07-22: after
+adding the disposable Git-root marker, the exact managed path discovered the
+profile, reached managed inference and the HTTPS MCP fixture, delegated once,
+and returned cited evidence.
 
 ### Tool Boundary
 

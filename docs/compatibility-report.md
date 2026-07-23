@@ -113,15 +113,20 @@ remains a release blocker.
 The production-shaped command is:
 
 ```text
-nemo-deepagents open-agent-system agent -n "<bounded task>"
+make ask QUERY="<bounded research task>"
+  -> upload the minimal declarative profile to a disposable Git-root workspace
   -> managed dcode launcher
   -> Deep Agents Code inside OpenShell
   -> managed inference and MCP configuration
+  -> persisted-trace validation and workspace cleanup
 ```
 
 The pinned launcher uses an isolated, read-only Python environment and disables
 executable hooks, unmanaged MCP files, custom provider overrides, and headless
-shell execution. Its supported project extension surface is declarative:
+shell execution. The direct `nemo-deepagents ... agent` wrapper starts at
+`/sandbox` and does not copy the host checkout, so the repository entry point
+performs the minimal upload before invoking `dcode`. Its supported project
+extension surface is declarative:
 
 ```text
 .deepagents/AGENTS.md

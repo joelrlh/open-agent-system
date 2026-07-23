@@ -283,6 +283,8 @@ agent_gate_passed=false
 agent_attempt=1
 while [ "$agent_attempt" -le 3 ]; do
   agent_output=
+  dcode_status=0
+  validation_status=1
   : > "$smoke_tmpdir/live-thread.error"
   : > "$smoke_tmpdir/live-thread.json"
   if agent_output=$(openshell sandbox exec -n "$sandbox_name" \
@@ -291,20 +293,34 @@ while [ "$agent_attempt" -le 3 ]; do
     dcode -n \
     'Delegate exactly once to the researcher subagent. The researcher must search the registered fixture for Jensen Huang five layers, fetch the best result, and return bounded evidence. Then synthesize only that evidence. Return only one compact JSON object with delegation_count, source_id, uri, five_layers, and injection_detected. five_layers must be a JSON array of five lowercase strings in evidence order, never one string. The only permitted tool calls are search_tools, task, research_research.search, and research_research.fetch; do not read files, fetch URLs, or use shell commands.' \
     --max-turns 10 --timeout 180 --no-stream 2>&1); then
-    thread_id=$(printf '%s\n' "$agent_output" \
-      | sed -n 's/.*Thread: \([0-9a-f-][0-9a-f-]*\).*/\1/p' \
-      | head -1)
-    if [ -n "$thread_id" ] \
-      && openshell sandbox exec -n "$sandbox_name" \
-        --workdir "$sandbox_project" \
-        --no-tty -- \
-        python3 integrations/nemoclaw/validate_live_thread.py --thread-id "$thread_id" \
-        > "$smoke_tmpdir/live-thread.json" 2> "$smoke_tmpdir/live-thread.error"; then
-      printf '%s\n' "$agent_output"
-      cat "$smoke_tmpdir/live-thread.json"
-      agent_gate_passed=true
-      break
+    dcode_status=0
+  else
+    dcode_status=$?
+  fi
+  thread_id=$(printf '%s\n' "$agent_output" \
+    | sed -n 's/.*Thread: \([0-9a-f-][0-9a-f-]*\).*/\1/p' \
+    | head -1)
+  if [ -n "$thread_id" ]; then
+    if openshell sandbox exec -n "$sandbox_name" \
+      --workdir "$sandbox_project" \
+      --no-tty -- \
+      python3 integrations/nemoclaw/validate_live_thread.py --thread-id "$thread_id" \
+      > "$smoke_tmpdir/live-thread.json" 2> "$smoke_tmpdir/live-thread.error"; then
+      validation_status=0
+    else
+      validation_status=$?
     fi
+  fi
+  if [ "$validation_status" -eq 0 ] && [ "$dcode_status" -eq 0 ]; then
+    printf '%s\n' "$agent_output"
+    cat "$smoke_tmpdir/live-thread.json"
+    agent_gate_passed=true
+    break
+  fi
+  if [ "$validation_status" -eq 3 ]; then
+    echo "managed agent trace violated a non-retryable authority boundary" >&2
+    sed -n '1,20p' "$smoke_tmpdir/live-thread.error" >&2
+    exit 1
   fi
   echo "managed agent acceptance attempt $agent_attempt did not pass" >&2
   if [ -s "$smoke_tmpdir/live-thread.error" ]; then

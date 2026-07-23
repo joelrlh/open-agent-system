@@ -11,7 +11,8 @@ claim that orchestrators, workers, and guardrails are the five layers.
 
 ```text
 operator
-  -> NemoClaw managed Deep Agents Code orchestrator
+  -> make ask (minimal profile staging + trace validation)
+    -> NemoClaw managed Deep Agents Code orchestrator
       -> researcher subagent (maximum one delegation)
           -> managed HTTPS MCP: research.search / research.fetch
               -> deterministic checked-in corpus
@@ -31,6 +32,12 @@ The repository contributes only supported declarative extension points:
 `src/open_agent_system` validates these contracts and serializes bounded,
 redacted evidence. It never calls `create_deep_agent(...)` and is not an
 alternate launcher.
+
+`integrations/nemoclaw/ask.sh` is a host-side adapter around the managed
+launcher, not an agent runtime. It copies the declarative profile into a
+disposable Git-root sandbox workspace, invokes managed `dcode`, validates the
+persisted trace, and removes the workspace. Provider credentials remain owned
+by NemoClaw/OpenShell and are never passed through this script.
 
 ## Control and Data Boundaries
 
