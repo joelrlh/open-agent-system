@@ -372,6 +372,86 @@ def test_search_budget_violation_precedes_persisted_runtime_failure(
         validator(trace)
 
 
+def test_exact_argument_violation_precedes_persisted_runtime_failure() -> None:
+    trace = valid_trace()
+    trace[3]["tool_calls"][0]["args"]["uri"] = "https://example.com/private"
+    trace.insert(-1, _runtime_failure("provider_capacity_exhausted"))
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="canonical fixture URI",
+    ):
+        validate_live_thread.validate_trace(trace)
+
+
+def test_user_argument_violation_precedes_persisted_runtime_failure() -> None:
+    trace = valid_user_trace()
+    trace[2]["tool_calls"][0]["args"]["limit"] = 999
+    trace.insert(-1, _runtime_failure("provider_capacity_exhausted"))
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="bounded contract",
+    ):
+        validate_live_thread.validate_user_trace(trace)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_forged_result_precedes_persisted_runtime_failure(validator: object) -> None:
+    trace = valid_trace()
+    search_result = next(
+        record
+        for record in trace
+        if record.get("kind") == "ToolMessage" and record.get("name") == "research_research.search"
+    )
+    search_result["content"] = {
+        "query": "Jensen Huang five layers",
+        "results": [
+            {
+                "source_id": "forged",
+                "uri": "https://research.fixture.test/sources/five-layer-stack",
+            }
+        ],
+        "status": "ok",
+    }
+    trace.insert(-1, _runtime_failure("provider_capacity_exhausted"))
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match=r"provenance|canonical evidence",
+    ):
+        validator(trace)
+
+
+def test_exact_forged_final_precedes_persisted_runtime_failure() -> None:
+    trace = valid_trace()
+    final = json.loads(trace[-1]["content"])
+    final["source_id"] = "forged"
+    trace[-1]["content"] = json.dumps(final)
+    trace.insert(-1, _runtime_failure("provider_capacity_exhausted"))
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="provenance",
+    ):
+        validate_live_thread.validate_trace(trace)
+
+
+def test_user_omitted_final_provenance_precedes_persisted_runtime_failure() -> None:
+    trace = valid_user_trace()
+    trace[-1]["content"] = "bounded answer without a source"
+    trace.insert(-1, _runtime_failure("provider_capacity_exhausted"))
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="omitted",
+    ):
+        validate_live_thread.validate_user_trace(trace)
+
+
 def test_user_trace_rejects_duplicate_fetch_uri() -> None:
     trace = valid_user_trace()
     fetch_call = copy.deepcopy(trace[3])

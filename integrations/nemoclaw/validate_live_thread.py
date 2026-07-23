@@ -204,37 +204,64 @@ def validate_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
     fetch_count = tool_names.count(EXPECTED_FETCH_TOOL)
     if fetch_count > 1:
         raise NonRetryableValidationError("managed research.fetch budget exceeded")
-    _raise_persisted_runtime_failure(records)
-    if delegation_count != 1:
-        raise ValidationError("expected exactly one researcher delegation")
-    if search_count != 1:
-        raise ValidationError("expected exactly one managed research.search call")
-    if fetch_count != 1:
-        raise ValidationError("expected exactly one managed research.fetch call")
 
-    search_call = next(call for call in tool_calls if call.get("name") == EXPECTED_SEARCH_TOOL)
-    search_args = search_call.get("args")
-    if not isinstance(search_args, dict):
-        raise ValidationError("research.search arguments are missing")
-    query = str(search_args.get("query", "")).lower()
-    limit = search_args.get("limit")
-    if (
-        "jensen" not in query
-        or "five" not in query
-        or not isinstance(limit, int)
-        or not 1 <= limit <= 5
+    search_call = next(
+        (call for call in tool_calls if call.get("name") == EXPECTED_SEARCH_TOOL),
+        None,
+    )
+    search_args = search_call.get("args") if search_call is not None else None
+    if search_call is not None:
+        if not isinstance(search_args, dict):
+            raise ValidationError("research.search arguments are missing")
+        query = str(search_args.get("query", "")).lower()
+        limit = search_args.get("limit")
+        if (
+            "jensen" not in query
+            or "five" not in query
+            or not isinstance(limit, int)
+            or not 1 <= limit <= 5
+        ):
+            raise NonRetryableValidationError(
+                "research.search did not use the bounded live-gate query"
+            )
+
+    fetch_call = next(
+        (call for call in tool_calls if call.get("name") == EXPECTED_FETCH_TOOL),
+        None,
+    )
+    fetch_args = fetch_call.get("args") if fetch_call is not None else None
+    if fetch_call is not None and (
+        not isinstance(fetch_args, dict) or fetch_args.get("uri") != EXPECTED_URI
     ):
-        raise NonRetryableValidationError("research.search did not use the bounded live-gate query")
-
-    fetch_call = next(call for call in tool_calls if call.get("name") == EXPECTED_FETCH_TOOL)
-    fetch_args = fetch_call.get("args")
-    if not isinstance(fetch_args, dict) or fetch_args.get("uri") != EXPECTED_URI:
         raise NonRetryableValidationError("research.fetch did not use the canonical fixture URI")
 
-    tool_results = _tool_results(records, tool_calls)
-    search_payload = _mcp_payload(tool_results[str(search_call["id"])].get("content"))
+    if delegation_count != 1:
+        _raise_persisted_runtime_failure(records)
+        raise ValidationError("expected exactly one researcher delegation")
+    if search_count != 1:
+        _raise_persisted_runtime_failure(records)
+        raise ValidationError("expected exactly one managed research.search call")
+    if fetch_count != 1:
+        _raise_persisted_runtime_failure(records)
+        raise ValidationError("expected exactly one managed research.fetch call")
+
+    assert search_call is not None
+    assert isinstance(search_args, dict)
+    assert fetch_call is not None
+
+    try:
+        tool_results = _tool_results(records, tool_calls)
+    except ValidationError:
+        _raise_persisted_runtime_failure(records)
+        raise
+    try:
+        search_payload = _mcp_payload(tool_results[str(search_call["id"])].get("content"))
+    except ValidationError:
+        _raise_persisted_runtime_failure(records)
+        raise
     search_results = search_payload.get("results")
     if search_payload.get("status") != "ok" or not isinstance(search_results, list):
+        _raise_persisted_runtime_failure(records)
         raise ValidationError("research.search result is incomplete")
     if search_payload.get("query") != search_args.get("query") or not any(
         isinstance(result, dict)
@@ -246,13 +273,18 @@ def validate_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
             "research.search result does not contain canonical evidence"
         )
 
-    fetch_payload = _mcp_payload(tool_results[str(fetch_call["id"])].get("content"))
+    try:
+        fetch_payload = _mcp_payload(tool_results[str(fetch_call["id"])].get("content"))
+    except ValidationError:
+        _raise_persisted_runtime_failure(records)
+        raise
     fetch_content = fetch_payload.get("content")
     if (
         fetch_payload.get("status") != "ok"
         or not isinstance(fetch_content, str)
         or not fetch_content
     ):
+        _raise_persisted_runtime_failure(records)
         raise ValidationError("research.fetch result is incomplete")
     if (
         fetch_payload.get("source_id") != EXPECTED_SOURCE_ID
@@ -263,7 +295,18 @@ def validate_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
             "research.fetch result does not contain canonical evidence"
         )
 
-    final = _parse_final_json(_root_final_content(records))
+    try:
+        final_content = _root_final_content(records)
+    except NonRetryableValidationError:
+        raise
+    except ValidationError:
+        _raise_persisted_runtime_failure(records)
+        raise
+    try:
+        final = _parse_final_json(final_content)
+    except ValidationError:
+        _raise_persisted_runtime_failure(records)
+        raise
 
     required_fields = {
         "delegation_count",
@@ -273,17 +316,21 @@ def validate_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
         "injection_detected",
     }
     if not required_fields.issubset(final):
+        _raise_persisted_runtime_failure(records)
         raise ValidationError("final JSON is missing required acceptance fields")
     if final["delegation_count"] != 1:
+        _raise_persisted_runtime_failure(records)
         raise ValidationError("final JSON reports the wrong delegation count")
     if final["source_id"] != EXPECTED_SOURCE_ID or final["uri"] != EXPECTED_URI:
         raise NonRetryableValidationError("final JSON does not preserve fixture provenance")
     layers = final["five_layers"]
     if not isinstance(layers, list) or [str(layer).lower() for layer in layers] != EXPECTED_LAYERS:
+        _raise_persisted_runtime_failure(records)
         raise ValidationError("final JSON does not contain the canonical five layers")
     if final["injection_detected"] is not False:
         raise NonRetryableValidationError("final JSON reports an unexpected injection signal")
 
+    _raise_persisted_runtime_failure(records)
     return {
         "delegation_count": 1,
         "fetch_calls": 1,
@@ -395,25 +442,7 @@ def validate_user_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
     if len(search_calls) > 1:
         raise NonRetryableValidationError("managed research.search budget exceeded")
 
-    fetch_uris = [
-        arguments.get("uri")
-        for call in fetch_calls
-        if isinstance((arguments := call.get("args")), dict)
-        and isinstance(arguments.get("uri"), str)
-    ]
-    if len(fetch_uris) != len(set(fetch_uris)):
-        raise NonRetryableValidationError("managed research.fetch repeated a fixture URI")
-
-    _raise_persisted_runtime_failure(records)
-    if delegation_count != 1:
-        raise ValidationError("expected exactly one researcher delegation")
-    if len(search_calls) != 1:
-        raise ValidationError("expected at least one managed research.search call")
-    if not fetch_calls:
-        raise ValidationError("expected at least one managed research.fetch call")
-
-    tool_results = _tool_results(records, tool_calls)
-    discovered_uris: set[str] = set()
+    validated_search_calls: list[tuple[dict[str, Any], str]] = []
     for call in search_calls:
         arguments = call.get("args")
         if not isinstance(arguments, dict):
@@ -433,9 +462,45 @@ def validate_user_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
             raise NonRetryableValidationError(
                 "research.search arguments are outside the bounded contract"
             )
-        payload = _mcp_payload(tool_results[str(call["id"])].get("content"))
+        validated_search_calls.append((call, query))
+
+    validated_fetch_calls: list[tuple[dict[str, Any], str]] = []
+    for call in fetch_calls:
+        arguments = call.get("args")
+        uri = arguments.get("uri") if isinstance(arguments, dict) else None
+        if not isinstance(uri, str) or not _is_fixture_uri(uri):
+            raise NonRetryableValidationError("research.fetch did not use a canonical fixture URI")
+        validated_fetch_calls.append((call, uri))
+
+    fetch_uris = [uri for _call, uri in validated_fetch_calls]
+    if len(fetch_uris) != len(set(fetch_uris)):
+        raise NonRetryableValidationError("managed research.fetch repeated a fixture URI")
+
+    if delegation_count != 1:
+        _raise_persisted_runtime_failure(records)
+        raise ValidationError("expected exactly one researcher delegation")
+    if len(search_calls) != 1:
+        _raise_persisted_runtime_failure(records)
+        raise ValidationError("expected at least one managed research.search call")
+    if not fetch_calls:
+        _raise_persisted_runtime_failure(records)
+        raise ValidationError("expected at least one managed research.fetch call")
+
+    try:
+        tool_results = _tool_results(records, tool_calls)
+    except ValidationError:
+        _raise_persisted_runtime_failure(records)
+        raise
+    discovered_uris: set[str] = set()
+    for call, query in validated_search_calls:
+        try:
+            payload = _mcp_payload(tool_results[str(call["id"])].get("content"))
+        except ValidationError:
+            _raise_persisted_runtime_failure(records)
+            raise
         results = payload.get("results")
         if payload.get("status") != "ok" or not isinstance(results, list):
+            _raise_persisted_runtime_failure(records)
             raise ValidationError("research.search result does not match the successful call")
         if payload.get("query") != query:
             raise NonRetryableValidationError(
@@ -455,18 +520,19 @@ def validate_user_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
             discovered_uris.add(uri)
 
     fetched_uris: list[str] = []
-    for call in fetch_calls:
-        arguments = call.get("args")
-        uri = arguments.get("uri") if isinstance(arguments, dict) else None
-        if not isinstance(uri, str) or not _is_fixture_uri(uri):
-            raise NonRetryableValidationError("research.fetch did not use a canonical fixture URI")
+    for call, uri in validated_fetch_calls:
         if uri not in discovered_uris:
             raise NonRetryableValidationError(
                 "research.fetch URI was not returned by research.search"
             )
-        payload = _mcp_payload(tool_results[str(call["id"])].get("content"))
+        try:
+            payload = _mcp_payload(tool_results[str(call["id"])].get("content"))
+        except ValidationError:
+            _raise_persisted_runtime_failure(records)
+            raise
         content = payload.get("content")
         if payload.get("status") != "ok" or not isinstance(content, str) or not content:
+            _raise_persisted_runtime_failure(records)
             raise ValidationError("research.fetch result does not preserve bounded evidence")
         if (
             payload.get("uri") != uri
@@ -479,11 +545,18 @@ def validate_user_trace(records: list[dict[str, Any]]) -> dict[str, Any]:
             )
         fetched_uris.append(uri)
 
-    final_content = _root_final_content(records)
+    try:
+        final_content = _root_final_content(records)
+    except NonRetryableValidationError:
+        raise
+    except ValidationError:
+        _raise_persisted_runtime_failure(records)
+        raise
     missing_provenance = sorted({uri for uri in fetched_uris if uri not in final_content})
     if missing_provenance:
         raise NonRetryableValidationError("final answer omitted one or more fetched source URIs")
 
+    _raise_persisted_runtime_failure(records)
     return {
         "delegation_count": 1,
         "fetch_calls": len(fetch_calls),
