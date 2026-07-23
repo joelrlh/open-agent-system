@@ -45,6 +45,7 @@ def test_agent_profiles_make_delegation_and_fetch_order_explicit() -> None:
     assert "Your next action must be `task`" in orchestrator
     assert "belong to the researcher" in orchestrator
     assert "When `task` returns, call no more tools" in orchestrator
+    assert "exact marker `injection_detected: true`" in orchestrator
     assert "make one `search_tools` lookup only" in researcher
     assert "fetch each selected" in researcher
     assert "never fetch the same URI again" in researcher

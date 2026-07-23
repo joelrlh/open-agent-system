@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import copy
 import importlib.util
 import json
@@ -151,6 +152,19 @@ def valid_user_trace() -> list[dict[str, object]]:
     return copy.deepcopy(valid_trace())
 
 
+def _set_fetch_injection(trace: list[dict[str, object]], detected: bool) -> None:
+    fetch_result = next(
+        record
+        for record in trace
+        if record.get("kind") == "ToolMessage" and record.get("name") == "research_research.fetch"
+    )
+    outer = ast.literal_eval(fetch_result["content"])
+    payload = json.loads(outer[0]["text"])
+    payload["injection_detected"] = detected
+    outer[0]["text"] = json.dumps(payload)
+    fetch_result["content"] = repr(outer)
+
+
 def _runtime_failure(code: str) -> dict[str, object]:
     return {
         "kind": "RuntimeError",
@@ -203,6 +217,190 @@ def test_exact_live_trace_rejects_direct_orchestrator_research_call() -> None:
         match="called by the researcher",
     ):
         validate_live_thread.validate_trace(trace)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_trace_rejects_orphan_tool_result(validator: object) -> None:
+    trace = valid_trace()
+    trace.insert(
+        -1,
+        {
+            "kind": "ToolMessage",
+            "name": "search_tools",
+            "content": "orphaned discovery",
+            "status": "success",
+            "tool_call_id": "orphan-call",
+            "tool_calls": [],
+        },
+    )
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="no corresponding tool call",
+    ):
+        validator(trace)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_trace_rejects_tool_activity_after_final_answer(validator: object) -> None:
+    trace = valid_trace()
+    trace.extend(
+        [
+            {
+                "kind": "AIMessage",
+                "name": "researcher",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "late-discovery",
+                        "name": "search_tools",
+                        "args": {"query": "research"},
+                    }
+                ],
+            },
+            {
+                "kind": "ToolMessage",
+                "name": "search_tools",
+                "content": "late discovery",
+                "status": "success",
+                "tool_call_id": "late-discovery",
+                "tool_calls": [],
+            },
+        ]
+    )
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="after the final orchestrator answer",
+    ):
+        validator(trace)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_trace_rejects_tool_result_after_final_answer(validator: object) -> None:
+    trace = valid_trace()
+    search_result = next(
+        record
+        for record in trace
+        if record.get("kind") == "ToolMessage" and record.get("name") == "research_research.search"
+    )
+    trace.remove(search_result)
+    trace.append(search_result)
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="after the final orchestrator answer",
+    ):
+        validator(trace)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_trace_rejects_research_before_delegation(validator: object) -> None:
+    trace = valid_trace()
+    trace[0], trace[1] = trace[1], trace[0]
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="before orchestrator delegation",
+    ):
+        validator(trace)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_trace_rejects_fetch_before_search(validator: object) -> None:
+    trace = valid_trace()
+    trace[2], trace[3] = trace[3], trace[2]
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match=r"research\.fetch occurred before research\.search",
+    ):
+        validator(trace)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_trace_accepts_bounded_task_focused_root_discovery(validator: object) -> None:
+    trace = valid_trace()
+    trace.insert(
+        0,
+        {
+            "kind": "AIMessage",
+            "name": "agent",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "root-discovery",
+                    "name": "search_tools",
+                    "args": {"query": "task delegation"},
+                }
+            ],
+        },
+    )
+    trace.insert(
+        -1,
+        {
+            "kind": "ToolMessage",
+            "name": "search_tools",
+            "content": "bounded task discovery",
+            "status": "success",
+            "tool_call_id": "root-discovery",
+            "tool_calls": [],
+        },
+    )
+
+    assert validator(trace)["status"] == "ok"
+
+
+@pytest.mark.parametrize(
+    ("owner", "query"),
+    [
+        ("agent", "research"),
+        ("researcher", "task"),
+        ("agent", "task research.search shell.exec filesystem.read"),
+        ("researcher", "research shell.exec filesystem.read"),
+    ],
+)
+@pytest.mark.parametrize(
+    "validator",
+    [validate_live_thread.validate_trace, validate_live_thread.validate_user_trace],
+)
+def test_trace_rejects_out_of_scope_tool_discovery(
+    validator: object, owner: str, query: str
+) -> None:
+    trace = valid_trace()
+    discovery = next(
+        record
+        for record in trace
+        if record.get("kind") == "AIMessage"
+        and record.get("name") == "researcher"
+        and any(call.get("name") == "search_tools" for call in record.get("tool_calls", []))
+    )
+    discovery["name"] = owner
+    discovery["tool_calls"][0]["args"]["query"] = query
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match=r"discovery scope|tool sequence",
+    ):
+        validator(trace)
 
 
 @pytest.mark.parametrize(
@@ -465,7 +663,13 @@ def test_user_trace_rejects_duplicate_fetch_uri() -> None:
         )
     )
     fetch_result["tool_call_id"] = "duplicate-fetch"
-    trace[-1:-1] = [fetch_call, fetch_result]
+    task_result_index = next(
+        index
+        for index, record in enumerate(trace)
+        if record.get("kind") == "ToolMessage" and record.get("name") == "task"
+    )
+    trace.insert(task_result_index, fetch_call)
+    trace.insert(-1, fetch_result)
 
     with pytest.raises(
         validate_live_thread.NonRetryableValidationError,
@@ -538,11 +742,55 @@ def test_accepts_bounded_user_research_trace() -> None:
     assert summary == {
         "delegation_count": 1,
         "fetch_calls": 1,
+        "injection_detected": False,
         "search_calls": 1,
         "status": "ok",
         "tool_calls": 4,
         "uris": ["https://research.fixture.test/sources/five-layer-stack"],
     }
+
+
+def test_user_trace_requires_final_injection_marker_for_flagged_evidence() -> None:
+    trace = valid_user_trace()
+    _set_fetch_injection(trace, True)
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="omitted the fetched prompt-injection signal",
+    ):
+        validate_live_thread.validate_user_trace(trace)
+
+
+def test_user_trace_accepts_bound_injection_marker() -> None:
+    trace = valid_user_trace()
+    _set_fetch_injection(trace, True)
+    trace[-1]["content"] += "\ninjection_detected: true"
+
+    summary = validate_live_thread.validate_user_trace(trace)
+
+    assert summary["injection_detected"] is True
+
+
+def test_user_trace_rejects_unfounded_injection_marker() -> None:
+    trace = valid_user_trace()
+    trace[-1]["content"] += "\ninjection_detected: true"
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="absent from fetched evidence",
+    ):
+        validate_live_thread.validate_user_trace(trace)
+
+
+def test_exact_trace_rejects_flagged_canonical_fetch() -> None:
+    trace = valid_trace()
+    _set_fetch_injection(trace, True)
+
+    with pytest.raises(
+        validate_live_thread.NonRetryableValidationError,
+        match="canonical evidence",
+    ):
+        validate_live_thread.validate_trace(trace)
 
 
 def test_user_trace_requires_researcher_delegation() -> None:
